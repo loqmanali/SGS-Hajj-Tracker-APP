@@ -239,8 +239,11 @@ export default function ShiftSummaryScreen() {
             {t("pendingNoTag")}: {queue.pendingNoTag}
           </Text>
           {queue.deadLetterTotal > 0 ? (
+            // Label as "Failed items" since this total spans scans +
+            // exceptions + no-tag entries — `failedScans` would be
+            // misleading copy.
             <Text style={styles.syncDim}>
-              {t("failedScans")}: {queue.deadLetterTotal}
+              {t("failedItems")}: {queue.deadLetterTotal}
               {queue.failedExceptions > 0 || queue.failedNoTag > 0
                 ? ` (${queue.failedExceptions} ${t("exceptions")}, ${queue.failedNoTag} ${t("noTag")})`
                 : ""}

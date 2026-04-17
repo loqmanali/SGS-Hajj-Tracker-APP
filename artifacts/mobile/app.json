@@ -16,13 +16,13 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "sa.semicolon.sgs.bagscan",
+      "bundleIdentifier": "com.semicolon.sgsbagscan",
       "infoPlist": {
         "NSCameraUsageDescription": "SGS BagScan uses the camera to scan luggage tag barcodes."
       }
     },
     "android": {
-      "package": "sa.semicolon.sgs.bagscan",
+      "package": "com.semicolon.sgsbagscan",
       "permissions": ["CAMERA"]
     },
     "web": {

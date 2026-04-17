@@ -55,6 +55,7 @@ export interface QueuedScan extends ScanRequest {
   localId: string;
   attempts: number;
   lastError?: string;
+  nextAttemptAt?: number; // epoch ms; honored by the sync loop's backoff
 }
 
 export async function enqueueScan(scan: ScanRequest): Promise<QueuedScan> {

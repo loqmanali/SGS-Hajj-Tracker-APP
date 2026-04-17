@@ -27,7 +27,7 @@ export function decideScan(args: {
 
   if (scannedTags.has(tagNumber)) {
     return {
-      flash: "yellow",
+      flash: "amber",
       title: "Already Scanned",
       subtitle: tagNumber,
       hapticKey: "duplicate",
@@ -46,10 +46,10 @@ export function decideScan(args: {
 
   if (bag.groupId !== groupId) {
     return {
-      flash: "amber",
+      flash: "red",
       title: "Wrong Group",
       subtitle: `${bag.pilgrimName} • ${bag.groupId}`,
-      hapticKey: "warning",
+      hapticKey: "error",
       bag,
     };
   }

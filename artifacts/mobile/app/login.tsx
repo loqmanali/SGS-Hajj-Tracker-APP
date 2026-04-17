@@ -38,7 +38,18 @@ export default function LoginScreen() {
       await auth.signIn(username.trim(), password);
       router.replace("/session-setup");
     } catch (err) {
-      setError((err as Error).message || "Login failed.");
+      const e = err as Error & { message?: string };
+      const msg = e?.message || "";
+      // Network failure → user is offline; show explicit copy per spec.
+      if (
+        /network/i.test(msg) ||
+        /failed to fetch/i.test(msg) ||
+        /typeerror/i.test(msg)
+      ) {
+        setError("Connect to SGS network first to sign in.");
+      } else {
+        setError(msg || "Login failed.");
+      }
     } finally {
       setBusy(false);
     }

@@ -18,6 +18,8 @@ import {
 } from "@/lib/db/storage";
 
 const MAX_ATTEMPTS = 5;
+// Per-attempt backoff in milliseconds: 2s, 4s, 8s, 16s, 32s.
+const BACKOFF_MS = [2_000, 4_000, 8_000, 16_000, 32_000];
 
 type ScanQueueContextValue = {
   queueSize: number;
@@ -74,7 +76,13 @@ export function ScanQueueProvider({ children }: { children: React.ReactNode }) {
     try {
       const queue = await getQueue();
       const remaining: QueuedScan[] = [];
+      const now = Date.now();
       for (const item of queue) {
+        // Honour exponential backoff before retrying
+        if (item.attempts > 0 && item.nextAttemptAt && item.nextAttemptAt > now) {
+          remaining.push(item);
+          continue;
+        }
         try {
           await sgsApi.submitScan(item);
           // success — drop from queue (do not re-add to remaining)
@@ -82,6 +90,8 @@ export function ScanQueueProvider({ children }: { children: React.ReactNode }) {
           item.attempts += 1;
           item.lastError = (err as Error).message;
           if (item.attempts < MAX_ATTEMPTS) {
+            const wait = BACKOFF_MS[Math.min(item.attempts - 1, BACKOFF_MS.length - 1)];
+            item.nextAttemptAt = now + wait;
             remaining.push(item);
           } else {
             // Park exhausted retries in dead-letter for manual review

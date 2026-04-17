@@ -7,7 +7,7 @@ import React, {
   useMemo,
   useState,
 } from "react";
-import { Platform } from "react-native";
+import { AppState, Platform } from "react-native";
 
 import { sgsApi, setAuthToken } from "@/lib/api/sgs";
 
@@ -80,6 +80,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       secureSet(USER_KEY, JSON.stringify(res.user)),
     ]);
   }, []);
+
+  // Silent refresh attempt when the app returns to the foreground.
+  // If the platform exposes a refresh endpoint and the call fails with 401,
+  // we sign out so the agent gets a fresh login prompt instead of a dead UI.
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", async (state) => {
+      if (state !== "active" || !token) return;
+      try {
+        await sgsApi.flights();
+      } catch (err) {
+        const code = (err as { status?: number }).status;
+        if (code === 401 || code === 403) {
+          setAuthToken(null);
+          setToken(null);
+          setUser(null);
+          await Promise.all([secureDel(TOKEN_KEY), secureDel(USER_KEY)]);
+        }
+      }
+    });
+    return () => sub.remove();
+  }, [token]);
 
   const signOut = useCallback(async () => {
     setAuthToken(null);

@@ -189,8 +189,14 @@ export default function ScanScreen() {
             onPress={() => router.push("/no-tag")}
           />
           <FooterButton
+            icon="refresh-cw"
+            label="Sync Now"
+            onPress={() => queue.syncNow()}
+            disabled={queue.syncing || queue.queueSize === 0}
+          />
+          <FooterButton
             icon="x-circle"
-            label="End Session"
+            label="End"
             onPress={async () => {
               await session.setSession(null);
               router.replace("/session-setup");
@@ -244,15 +250,22 @@ function FooterButton({
   icon,
   label,
   onPress,
+  disabled,
 }: {
   icon: keyof typeof Feather.glyphMap;
   label: string;
   onPress: () => void;
+  disabled?: boolean;
 }) {
   return (
     <Pressable
       onPress={onPress}
-      style={({ pressed }) => [styles.fbtn, pressed && { opacity: 0.6 }]}
+      disabled={disabled}
+      style={({ pressed }) => [
+        styles.fbtn,
+        pressed && { opacity: 0.6 },
+        disabled && { opacity: 0.4 },
+      ]}
     >
       <Feather name={icon} size={18} color={colors.sgs.textPrimary} />
       <Text style={styles.fbtnTxt}>{label}</Text>

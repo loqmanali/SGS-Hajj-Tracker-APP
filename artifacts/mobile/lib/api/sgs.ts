@@ -127,7 +127,10 @@ export const sgsApi = {
       body: JSON.stringify({ refreshToken }),
     }),
 
-  flights: () => request<Flight[]>("/api/agent/flights"),
+  flights: () => request<Flight[]>("/api/flights"),
+
+  flightAssignments: () =>
+    request<{ flightIds: string[] }>("/api/flights/assignments-all"),
 
   groups: (flightId: string) =>
     request<BagGroup[]>(`/api/agent/flights/${flightId}/groups`),

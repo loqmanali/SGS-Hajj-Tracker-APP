@@ -1,5 +1,5 @@
 import { Feather } from "@expo/vector-icons";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import React, { useState } from "react";
 import {
@@ -29,13 +29,34 @@ export default function SessionSetupScreen() {
   const insets = useSafeAreaInsets();
 
   const [selectedFlight, setSelectedFlight] = useState<Flight | null>(null);
+  const [pendingGroup, setPendingGroup] = useState<BagGroup | null>(null);
   const [busy, setBusy] = useState(false);
+  const [progressText, setProgressText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const flightsQ = useQuery({
-    queryKey: ["flights"],
-    queryFn: sgsApi.flights,
+  const [flightsQ, assignmentsQ] = useQueries({
+    queries: [
+      { queryKey: ["flights"], queryFn: sgsApi.flights },
+      {
+        queryKey: ["assignments"],
+        queryFn: sgsApi.flightAssignments,
+        // Assignments are nice-to-have; failure should not block the screen.
+        retry: 0,
+      },
+    ],
   });
+
+  // Merge assigned ids and sort: assigned flights first, then by departure.
+  const flights = React.useMemo(() => {
+    const list = flightsQ.data ?? [];
+    const assignedIds = new Set(assignmentsQ.data?.flightIds ?? []);
+    return [...list]
+      .map((f) => ({ ...f, assigned: f.assigned || assignedIds.has(f.id) }))
+      .sort((a, b) => {
+        if (!!a.assigned !== !!b.assigned) return a.assigned ? -1 : 1;
+        return a.departureTime.localeCompare(b.departureTime);
+      });
+  }, [flightsQ.data, assignmentsQ.data]);
 
   const groupsQ = useQuery({
     queryKey: ["groups", selectedFlight?.id],
@@ -47,8 +68,10 @@ export default function SessionSetupScreen() {
     if (!selectedFlight) return;
     setBusy(true);
     setError(null);
+    setProgressText("Loading manifest…");
     try {
       const manifest = await sgsApi.manifest(group.id);
+      setProgressText(`Loading manifest: ${manifest.length} bags`);
       await cacheManifest(group.id, manifest);
       await session.setSession({
         flight: selectedFlight,
@@ -58,8 +81,10 @@ export default function SessionSetupScreen() {
       router.replace("/scan");
     } catch (err) {
       setError((err as Error).message || "Could not load manifest.");
+      setPendingGroup(null);
     } finally {
       setBusy(false);
+      setProgressText(null);
     }
   };
 
@@ -87,7 +112,7 @@ export default function SessionSetupScreen() {
           />
         ) : (
           <FlatList
-            data={flightsQ.data ?? []}
+            data={flights}
             keyExtractor={(f) => f.id}
             contentContainerStyle={[
               styles.list,
@@ -132,7 +157,7 @@ export default function SessionSetupScreen() {
           ]}
           ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
           renderItem={({ item }) => (
-            <GroupCard group={item} onPress={() => startSession(item)} />
+            <GroupCard group={item} onPress={() => setPendingGroup(item)} />
           )}
           ListEmptyComponent={
             <Text style={styles.empty}>No groups for this flight.</Text>
@@ -147,7 +172,31 @@ export default function SessionSetupScreen() {
       {busy ? (
         <View pointerEvents="auto" style={styles.busyOverlay}>
           <ActivityIndicator color={colors.sgs.green} size="large" />
-          <Text style={styles.busyTxt}>Caching manifest…</Text>
+          <Text style={styles.busyTxt}>{progressText ?? "Loading…"}</Text>
+        </View>
+      ) : null}
+      {pendingGroup ? (
+        <View style={styles.confirmOverlay}>
+          <View style={styles.confirmCard}>
+            <Text style={styles.confirmTitle}>Group {pendingGroup.groupNumber}</Text>
+            <Text style={styles.confirmSub}>
+              {pendingGroup.pilgrimCount} pilgrims · {pendingGroup.expectedBags} bags
+            </Text>
+            <Text style={styles.confirmSub}>
+              Flight {selectedFlight.flightNumber} · {selectedFlight.destination}
+            </Text>
+            <View style={{ height: 16 }} />
+            <PrimaryButton
+              label="START SCANNING"
+              onPress={() => startSession(pendingGroup)}
+            />
+            <View style={{ height: 8 }} />
+            <PrimaryButton
+              label="Cancel"
+              variant="ghost"
+              onPress={() => setPendingGroup(null)}
+            />
+          </View>
         </View>
       ) : null}
     </View>
@@ -313,5 +362,31 @@ const styles = StyleSheet.create({
     color: colors.sgs.textPrimary,
     fontFamily: FONTS.bodyMedium,
     fontSize: 14,
+  },
+  confirmOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.85)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+  },
+  confirmCard: {
+    width: "100%",
+    backgroundColor: colors.sgs.surface,
+    borderColor: colors.sgs.border,
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 20,
+  },
+  confirmTitle: {
+    fontFamily: FONTS.bodyBold,
+    fontSize: 22,
+    color: colors.sgs.textPrimary,
+    marginBottom: 4,
+  },
+  confirmSub: {
+    fontFamily: FONTS.body,
+    fontSize: 14,
+    color: colors.sgs.textMuted,
   },
 });

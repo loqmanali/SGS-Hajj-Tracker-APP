@@ -132,6 +132,22 @@ export default function ScanScreen() {
         }
       />
 
+      {queue.deadLetterSize > 0 ? (
+        <View style={styles.dlBanner}>
+          <Feather name="alert-circle" size={16} color={colors.sgs.black} />
+          <Text style={styles.dlText}>
+            {queue.deadLetterSize} scan{queue.deadLetterSize === 1 ? "" : "s"}{" "}
+            failed to upload.
+          </Text>
+          <Pressable onPress={queue.retryDeadLetter} style={styles.dlBtn}>
+            <Text style={styles.dlBtnTxt}>Retry</Text>
+          </Pressable>
+          <Pressable onPress={queue.discardDeadLetter} style={styles.dlBtn}>
+            <Text style={styles.dlBtnTxt}>Discard</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
       <View style={styles.body}>
         {isZebra ? (
           <ZebraIdleView />
@@ -140,15 +156,9 @@ export default function ScanScreen() {
             <CameraView
               style={StyleSheet.absoluteFill}
               barcodeScannerSettings={{
-                barcodeTypes: [
-                  "code128",
-                  "code39",
-                  "ean13",
-                  "ean8",
-                  "qr",
-                  "pdf417",
-                  "datamatrix",
-                ],
+                // Spec: bag tags are CODE_128 only — restrict to avoid
+                // false positives from other symbologies in baggage areas.
+                barcodeTypes: ["code128"],
               }}
               onBarcodeScanned={(r) => handleScan(r.data)}
             />
@@ -276,6 +286,31 @@ function FooterButton({
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: colors.sgs.black },
   body: { flex: 1, position: "relative", overflow: "hidden" },
+  dlBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: colors.sgs.flashAmber,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  dlText: {
+    flex: 1,
+    color: colors.sgs.black,
+    fontFamily: FONTS.bodyMedium,
+    fontSize: 13,
+  },
+  dlBtn: {
+    backgroundColor: colors.sgs.black,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  dlBtnTxt: {
+    color: colors.sgs.textPrimary,
+    fontFamily: FONTS.bodyBold,
+    fontSize: 12,
+  },
   reticle: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center" },
   reticleBox: {
     width: "78%",

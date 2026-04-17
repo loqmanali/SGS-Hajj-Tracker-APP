@@ -11,11 +11,13 @@ import React, {
 import { sgsApi, type ScanRequest } from "@/lib/api/sgs";
 import {
   enqueueScan,
+  getDeadLetter,
   getQueue,
   moveToDeadLetter,
   setQueue,
   type QueuedScan,
 } from "@/lib/db/storage";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const MAX_ATTEMPTS = 5;
 // Per-attempt backoff in milliseconds: 2s, 4s, 8s, 16s, 32s.
@@ -23,23 +25,28 @@ const BACKOFF_MS = [2_000, 4_000, 8_000, 16_000, 32_000];
 
 type ScanQueueContextValue = {
   queueSize: number;
+  deadLetterSize: number;
   online: boolean;
   syncing: boolean;
   enqueue: (scan: ScanRequest) => Promise<void>;
   syncNow: () => Promise<void>;
+  retryDeadLetter: () => Promise<void>;
+  discardDeadLetter: () => Promise<void>;
 };
 
 const Ctx = createContext<ScanQueueContextValue | null>(null);
 
 export function ScanQueueProvider({ children }: { children: React.ReactNode }) {
   const [queueSize, setQueueSize] = useState(0);
+  const [deadLetterSize, setDeadLetterSize] = useState(0);
   const [online, setOnline] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const refreshing = useRef(false);
 
   const refresh = useCallback(async () => {
-    const q = await getQueue();
+    const [q, dl] = await Promise.all([getQueue(), getDeadLetter()]);
     setQueueSize(q.length);
+    setDeadLetterSize(dl.length);
   }, []);
 
   useEffect(() => {
@@ -112,6 +119,27 @@ export function ScanQueueProvider({ children }: { children: React.ReactNode }) {
     }
   }, [refresh]);
 
+  const retryDeadLetter = useCallback(async () => {
+    const dl = await getDeadLetter();
+    if (dl.length === 0) return;
+    const reset = dl.map((item) => ({
+      ...item,
+      attempts: 0,
+      nextAttemptAt: undefined,
+      lastError: undefined,
+    }));
+    const queue = await getQueue();
+    await setQueue([...queue, ...reset]);
+    await AsyncStorage.removeItem("sgs:scanDeadLetter");
+    await refresh();
+    syncNow().catch(() => undefined);
+  }, [refresh, syncNow]);
+
+  const discardDeadLetter = useCallback(async () => {
+    await AsyncStorage.removeItem("sgs:scanDeadLetter");
+    await refresh();
+  }, [refresh]);
+
   const enqueue = useCallback(
     async (scan: ScanRequest) => {
       await enqueueScan(scan);
@@ -135,8 +163,26 @@ export function ScanQueueProvider({ children }: { children: React.ReactNode }) {
   }, [online, syncNow]);
 
   const value = useMemo(
-    () => ({ queueSize, online, syncing, enqueue, syncNow }),
-    [queueSize, online, syncing, enqueue, syncNow],
+    () => ({
+      queueSize,
+      deadLetterSize,
+      online,
+      syncing,
+      enqueue,
+      syncNow,
+      retryDeadLetter,
+      discardDeadLetter,
+    }),
+    [
+      queueSize,
+      deadLetterSize,
+      online,
+      syncing,
+      enqueue,
+      syncNow,
+      retryDeadLetter,
+      discardDeadLetter,
+    ],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

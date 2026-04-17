@@ -98,6 +98,14 @@ export default function LoginScreen() {
 
         <Text style={styles.footer}>
           Hajj Luggage Operations · v1.0
+          {auth.lastSyncAt
+            ? `\nLast sync ${new Date(auth.lastSyncAt).toLocaleString([], {
+                month: "short",
+                day: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+              })}`
+            : ""}
         </Text>
       </ScrollView>
     </KeyboardAvoidingView>

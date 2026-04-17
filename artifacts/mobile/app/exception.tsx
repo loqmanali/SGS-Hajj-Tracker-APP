@@ -21,12 +21,10 @@ import { useSession } from "@/contexts/SessionContext";
 import { sgsApi } from "@/lib/api/sgs";
 
 const REASONS = [
-  "Damaged tag",
-  "Wrong destination",
-  "Damaged bag",
-  "Hazardous content",
-  "Excess weight",
-  "Other",
+  { value: "MISSING", label: "Missing" },
+  { value: "DAMAGED", label: "Damaged" },
+  { value: "DELAYED", label: "Delayed" },
+  { value: "CUSTOMS_HOLD", label: "Customs hold" },
 ] as const;
 
 export default function ExceptionScreen() {
@@ -92,11 +90,11 @@ export default function ExceptionScreen() {
             <Text style={styles.sectionLabel}>Reason</Text>
             <View style={styles.chips}>
               {REASONS.map((r) => {
-                const active = r === reason;
+                const active = r.value === reason;
                 return (
                   <Pressable
-                    key={r}
-                    onPress={() => setReason(r)}
+                    key={r.value}
+                    onPress={() => setReason(r.value)}
                     style={[
                       styles.chip,
                       active && {
@@ -111,7 +109,7 @@ export default function ExceptionScreen() {
                         active && { color: colors.sgs.black },
                       ]}
                     >
-                      {r}
+                      {r.label}
                     </Text>
                   </Pressable>
                 );

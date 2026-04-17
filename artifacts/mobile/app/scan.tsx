@@ -155,11 +155,26 @@ export default function ScanScreen() {
         title={`${session.session.flight.flightNumber} · ${t("groupLabel")} ${session.session.group.groupNumber}`}
         subtitle={`${scannedCount}/${expected} ${t("bags")} · ${pct}%`}
         right={
-          <StatusPill
-            online={queue.online}
-            queueSize={queue.queueSize}
-            syncing={queue.syncing}
-          />
+          <View style={styles.headerRight}>
+            <StatusPill
+              online={queue.online}
+              queueSize={queue.queueSize}
+              syncing={queue.syncing}
+            />
+            <Pressable
+              onPress={() => router.push("/settings")}
+              hitSlop={12}
+              accessibilityRole="button"
+              accessibilityLabel={t("settings")}
+              style={styles.headerSettingsBtn}
+            >
+              <Feather
+                name="settings"
+                size={20}
+                color={colors.sgs.textPrimary}
+              />
+            </Pressable>
+          </View>
         }
       />
 
@@ -375,6 +390,13 @@ function FooterButton({
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: colors.sgs.black },
   body: { flex: 1, position: "relative", overflow: "hidden" },
+  headerRight: { flexDirection: "row", alignItems: "center", gap: 10 },
+  headerSettingsBtn: {
+    width: 32,
+    height: 32,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   dlBanner: {
     flexDirection: "row",
     alignItems: "center",

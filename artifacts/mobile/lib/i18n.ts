@@ -112,6 +112,20 @@ const en = {
   momentsAgo: "moments ago",
   minutesAgo: "{n}m ago",
   hoursAgo: "{n}h ago",
+
+  // Settings · OTA updates
+  settings: "Settings",
+  appUpdates: "App updates",
+  appUpdatesBody:
+    "BagScan auto-checks on launch and when reopened. Tap below to pull a hotfix immediately.",
+  checkForUpdates: "Check for updates",
+  checkForUpdatesHint: "Tap to check now.",
+  checking: "Checking…",
+  downloading: "Downloading update…",
+  upToDate: "You're on the latest build.",
+  updateReady: "Update downloaded — tap to apply.",
+  applyUpdateNow: "Apply update now",
+  applying: "Applying…",
 };
 
 const ar: Dict = {
@@ -209,6 +223,19 @@ const ar: Dict = {
   momentsAgo: "الآن",
   minutesAgo: "منذ {n} د",
   hoursAgo: "منذ {n} س",
+
+  settings: "الإعدادات",
+  appUpdates: "تحديثات التطبيق",
+  appUpdatesBody:
+    "يفحص BagScan التحديثات تلقائيًا عند التشغيل. اضغط لجلب تحديث عاجل الآن.",
+  checkForUpdates: "التحقق من التحديثات",
+  checkForUpdatesHint: "اضغط للتحقق الآن.",
+  checking: "جارٍ التحقق…",
+  downloading: "جارٍ تنزيل التحديث…",
+  upToDate: "أنت تستخدم أحدث إصدار.",
+  updateReady: "تم تنزيل التحديث — اضغط للتطبيق.",
+  applyUpdateNow: "تطبيق التحديث الآن",
+  applying: "جارٍ التطبيق…",
 };
 
 const dictionaries: Record<Locale, Dict> = { en, ar };

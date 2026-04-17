@@ -1,0 +1,164 @@
+SGS BagScan — Complete Codebase Analysis
+Architecture Overview
+The app is well-structured and largely aligned with the specification from Document 2. Three layers:
+
+Expo Router (file-based): login → session-setup → scan → exception / no-tag
+Three contexts: AuthContext (JWT + SecureStore), SessionContext (AsyncStorage), ScanQueueContext (offline queue + sync engine)
+Native Zebra bridge: Kotlin ZebraScanModule + config plugin + DeviceEventEmitter → useZebraScanner hook
+
+
+What Is Implemented Correctly
+Authentication
+
+JWT stored in expo-secure-store (hardware-backed keystore on Zebra/iOS) — correct
+HTTP-only refresh cookie model is correctly implemented — credentials: "include" on every request, no client-side refresh token held
+Silent refresh on AppState foreground event with automatic sign-out on 401/403
+Graceful fallback: if refresh fails but /api/flights succeeds, session stays alive
+
+Scanner Engine
+
+CameraView with barcodeTypes: ["code128"] only — matches the spec exactly
+Camera stays on via useFocusEffect (mounts/unmounts on screen focus, not on each decode)
+normalizeTag() correctly strips GS1 control chars [\x00-\x1F\x7F] AND AIM identifier prefix ]\w{2} (e.g. ]C1 from DataWedge)
+1500ms debounce via lastScan.current — tracks both tag value AND timestamp, so same tag rapid-fires are blocked but a different tag immediately resets the window
+
+Zebra Integration
+
+Auto-configures DataWedge profile SGSBagScan on every cold start — idempotent, non-Zebra devices silently ignore the broadcast
+RECEIVER_EXPORTED flag correctly set for Android 13+ (API 33+)
+useRef pattern on the callback in useZebraScanner prevents stale closure — correct
+Symbology forwarded alongside the data string — available for future filtering
+
+Offline Queue
+
+Exponential backoff: 2s, 4s, 8s, 16s, 32s (matches spec)
+Max 5 attempts then dead letter — correct
+Mid-sync arrival handling: scans that arrive during a sync window are merged back, not dropped
+Dead letter UI on scan screen with Retry / Discard — correct
+30s periodic sync + online-trigger sync + manual sync button
+
+Manifest Cache
+
+Per-group AsyncStorage cache with lastSync timestamp
+Per-group scanned tag Set persisted to AsyncStorage — survives app restarts
+Session startup shows manifest count: Loading manifest: X bags with busy overlay
+Offline fallback: both flights and groups cached independently with cachedAt timestamps and age displayed to agent
+
+Visual Feedback
+
+Full-viewport FlashOverlay with 80ms fade-in — correct
+Five color states: green (800ms), red (1500ms + 3× haptic), yellow (1000ms), amber border (1000ms), orange (1500ms)
+Haptic patterns correctly differentiated: single light pulse / triple error / double medium / single warning
+
+Zebra Idle View
+
+Progress ring for scanned/expected count — visual without camera drain
+Shows last tag in large text — readable at arm's length
+
+
+Critical Bugs
+Bug 1 — Wrong eventType sent on every scan (app sends "SCAN", server rejects it)
+In lib/api/sgs.ts line ~200:
+typescriptbody: JSON.stringify({
+  eventType: "SCAN",   // ← DOES NOT EXIST in the platform's event_type enum
+  ...
+})
+The SGS platform's event_type enum from shared/schema.ts contains: MANIFESTED, RECEIVED, LOADED, IN_TRANSIT, DELIVERED, EXCEPTION, CUSTODY_CHANGE, REASSIGNED, COLLECTED_FROM_BELT, CUSTOMS_RELEASE, HANDED_TO_DRIVER, TRIP_STARTED, ARRIVED_AT_LOCATION, EXCEPTION_RAISED. There is no "SCAN" value.
+Zod validates this server-side via bagEventPayloadSchema. Every scan submitted by the app will fail with a 400 validation error. This means zero scans will ever be recorded in the current build.
+Fix: Change to "COLLECTED_FROM_BELT" for airport_ops agents.
+
+Bug 2 — isSgsHajjTag regex rejects all real airline bag tags
+In lib/scanLogic.ts:
+typescriptreturn /^SGS[A-Z0-9]{8,15}$/i.test(tag);
+This requires every tag to start with "SGS". Real IATA airline bag tags follow carrier-specific formats like SVJED260510013, TKJED1234567, or the platform's own format SV-JED-260510-013. Surrogate no-tags use NOTAG-JED-042. None of these pass this regex.
+Result: Every real scan will flash orange "OUT OF SCOPE" and the scan will still be queued (because handleScan always calls queue.enqueue() regardless of decideScan result). The offline counter will show wrong counts, agents will see constant orange flashes, and confusion will be immediate on first use.
+Fix: Remove or significantly relax this check. The server is the authoritative validator. At minimum change to any valid-length alphanumeric with hyphens:
+typescriptreturn /^[A-Z0-9\-]{5,25}$/i.test(tag);
+
+Bug 3 — Manifest endpoint GET /api/bags?groupId= is not implemented in the platform
+sgsApi.manifest() calls:
+typescript`/api/bags?groupId=${encodeURIComponent(groupId)}`
+The platform's GET /api/bags route in routes.ts calls storage.getBags(page, limit, stationCode, assignedFlightIds) — it does not accept groupId as a query parameter. The platform has an internal getBagsByGroup(groupId) storage method but it is not exposed via a public route on GET /api/bags.
+The correct endpoint to use is GET /api/flights/:id/bags (which exists at line 890 of routes.ts and calls storage.getBagsByFlightId(flightId)). But this returns all bags for a flight, not just a group's bags. The platform has no GET /api/flight-groups/:id/bags endpoint — this was identified as a confirmed gap in the v9 analysis.
+Result: The manifest fetch will return all bags for a flight (if the route even partially matches) or an empty array, making offline verification useless.
+Fix: Either:
+
+Add GET /api/flight-groups/:id/bags to the platform (the correct fix, aligns with the spec)
+Call GET /api/flights/:id/bags and filter client-side by groupId
+
+
+Bug 4 — flightAssignments API response shape mismatch
+sgsApi.flightAssignments() expects Array<{ flightId: string | number }> from /api/flights/assignments-all. But the platform returns Record<string, Array<{ userId, userName, userFullName }>> — a map keyed by flightId to the agents assigned to that flight. The current parsing produces an empty flightIds array every time, so no flights are ever marked as "ASSIGNED" for a duty_manager's agents.
+Fix:
+typescriptflightAssignments: async () => {
+  const map = await request<Record<string, unknown[]>>("/api/flights/assignments-all");
+  return { flightIds: Object.keys(map) };
+},
+
+Bug 5 — Online detection pings /api/healthz (the endpoint is /api/health)
+In ScanQueueContext.tsx:
+typescript`${baseUrl}/api/healthz`
+The platform's health endpoint is /api/health (without the z). A 404 response has status 404 < 500, so res.ok || res.status < 500 evaluates to true — meaning the online check accidentally works because the < 500 fallback catches the 404. However this is fragile. If the server returns 503 on /api/healthz (which it might for a custom health path that's configured), online would show false.
+Fix: Change to /api/health.
+
+Significant Gaps
+Gap 1 — Exceptions and no-tag not queued offline
+exception.tsx calls sgsApi.submitException() directly. no-tag.tsx calls sgsApi.registerNoTag() directly. Both will fail with a network error if the agent is offline, showing only a native Alert. There is no queuing mechanism for these.
+Operational impact: Belt areas with spotty WiFi mean agents frequently offline when needing to raise exceptions. They'd have to remember the tag, reconnect, re-enter.
+Fix: Add exception and no-tag entries to ScanQueueContext with their own storage keys and retry logic, mirroring the scan queue.
+Gap 2 — stationCode missing from no-tag registration
+sgsApi.registerNoTag() accepts stationCode and the platform uses it to generate the surrogate tag format (NOTAG-JED-042). The no-tag.tsx screen does not pass it. The platform will default or fail depending on server-side handling.
+Fix: Extract stationCode from the user's JWT (available via auth.user — needs to be exposed from the context, or read from the token claims) and pass it to registerNoTag.
+Gap 3 — Last scanned tag not passed to exception screen
+When an agent scans a bag and gets a red flash (not in manifest), they immediately tap "Exception". But exception.tsx starts with an empty tag field. The agent must re-type the full tag number.
+Fix: Pass the tag via route param: router.push({ pathname: "/exception", params: { tag: lastTag ?? "" } }) and read it in exception.tsx with useLocalSearchParams.
+Gap 4 — Camera permission permanent denial has no "Open Settings" path
+CameraPermissionView shows static text when canAskAgain is false. expo-linking is installed but unused here.
+Fix:
+typescript<PrimaryButton
+  label="Open Settings"
+  onPress={() => Linking.openSettings()}
+  variant="ghost"
+/>
+Gap 5 — deviceId never set in scan events
+ScanRequest.deviceId exists but queue.enqueue() in scan.tsx never passes it. The correlationId on the server falls back to just scannedAt timestamp, losing cross-device duplicate detection.
+Fix: Use expo-device's Device.osBuildId or generate a stable UUID on first launch stored in SecureStore, and pass it as deviceId in every scan request.
+Gap 6 — Session context uses AsyncStorage (unencrypted) for flight/group data
+SessionContext stores the selected flight and group (including IDs, names, expected bag counts) in unencrypted AsyncStorage. Auth tokens correctly use SecureStore. The session data is not sensitive, but worth noting if compliance requirements change.
+Gap 7 — No minimum app version enforcement
+The spec mentioned blocking outdated versions from logging in. There's no version check against the server on startup. If the server adds a new required eventType or changes auth flow, old installed APKs will silently break.
+
+Minor Issues
+IssueLocationSeverityscannedCount init reads AsyncStorage once but handleScan derives count from the set size — safe but not reactive to external changesscan.tsxLowflash.orange check for text color defaults to #FFF but orange background needs dark text for contrastFlashOverlay.tsxLowgroupNumber falls back to String(g.id) — the UUID will show as the group label if groupNumber and groupName are both absentsgs.ts normalizeBagLowstartSession shows "Loading manifest…" then immediately updates to "Loading manifest: X bags" — the first text is visible only for the fetch durationsession-setup.tsxLowRing progress indicator in ZebraIdleView uses transformOrigin as a string cast to unknown as string — this is a React Native limitation but the visual may not render correctly on all RN versionsscan.tsxMediumException screen: MISMATCH exception type exists in the platform schema but is not in the REASONS array — likely intentional per spec but worth confirmingexception.tsxLow
+
+Confirmed Good Decisions
+
+DM Sans + Tajawal fonts — correct bilingual font stack per SGS brand
+Dark mode only — userInterfaceStyle: "dark" in app.json, backgroundColor: "#000000" everywhere
+newArchEnabled: true — React Native New Architecture enabled, aligns with Expo SDK 54 best practices
+React Compiler enabled — babel-plugin-react-compiler in devDependencies and experiments
+useFocusEffect for camera lifecycle — camera unmounts on screen blur, preventing background camera drain
+Adapter pattern in lib/api/sgs.ts — server shapes normalized to stable public types before reaching screens
+useRef for scan callback in useZebraScanner — prevents stale closure without triggering re-subscriptions
+Error boundary at root — class component correctly, per React spec
+LEGACY_REFRESH_KEY cleanup on sign-out — cleans up any stale tokens from previous app versions
+
+
+Priority Fix Order for Your Team
+Ship blockers (must fix before first device test):
+
+eventType: "SCAN" → "COLLECTED_FROM_BELT" in sgs.ts
+isSgsHajjTag regex — remove or relax to allow real IATA tag formats
+Manifest endpoint — use /api/flights/:id/bags filtered by groupId OR add new platform route
+
+Before go-live:
+4. flightAssignments response parsing fix
+5. Ping URL /api/healthz → /api/health
+6. Pass lastTag to exception screen via route params
+7. Pass stationCode to no-tag registration
+8. Offline queuing for exceptions and no-tag
+Post-launch improvements:
+9. deviceId in scan events
+10. Camera permission → Open Settings link
+11. Minimum app version check
+12. Ring progress indicator CSS fix for RN

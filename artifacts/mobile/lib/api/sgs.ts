@@ -15,11 +15,12 @@
 
 const DEFAULT_BASE = "https://sgshajj.semicolon.sa";
 
+// IMPORTANT: do NOT fall back to EXPO_PUBLIC_DOMAIN here. That env var is set
+// by the build script to the Replit hosting domain so Metro can serve the JS
+// bundle — it is NOT the API host. Conflating the two routed every authed
+// call to a server with no /api/* mounted, producing 404 on login.
 export const SGS_BASE_URL =
-  process.env.EXPO_PUBLIC_SGS_API_URL ||
-  (process.env.EXPO_PUBLIC_DOMAIN
-    ? `https://${process.env.EXPO_PUBLIC_DOMAIN}`
-    : DEFAULT_BASE);
+  process.env.EXPO_PUBLIC_SGS_API_URL || DEFAULT_BASE;
 
 let authToken: string | null = null;
 export function setAuthToken(token: string | null) {

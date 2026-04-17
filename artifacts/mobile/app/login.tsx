@@ -24,12 +24,22 @@ import { APP_NAME, FONTS, ORG } from "@/constants/branding";
 import colors from "@/constants/colors";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLocale } from "@/contexts/LocaleContext";
+import { SGS_BASE_URL } from "@/lib/api/sgs";
 
 export default function LoginScreen() {
   const router = useRouter();
   const auth = useAuth();
   const insets = useSafeAreaInsets();
   const { t, locale, setLocale, isRTL } = useLocale();
+  // Surface the API host so any future base-URL misconfiguration is
+  // visible in the field without needing to attach a debugger.
+  const apiHost = React.useMemo(() => {
+    try {
+      return new URL(SGS_BASE_URL).host;
+    } catch {
+      return SGS_BASE_URL;
+    }
+  }, []);
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -163,6 +173,7 @@ export default function LoginScreen() {
                 minute: "2-digit",
               })}`
             : ""}
+          {`\nAPI: ${apiHost}`}
         </Text>
       </ScrollView>
     </KeyboardAvoidingView>

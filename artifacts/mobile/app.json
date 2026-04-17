@@ -56,6 +56,9 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "EXPO_PUBLIC_SGS_API_URL": "https://sgshajj.semicolon.sa"
     }
   }
 }

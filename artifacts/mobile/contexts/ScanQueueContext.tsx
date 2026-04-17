@@ -8,7 +8,7 @@ import React, {
   useState,
 } from "react";
 
-import { sgsApi, type ScanRequest } from "@/lib/api/sgs";
+import { SGS_BASE_URL, sgsApi, type ScanRequest } from "@/lib/api/sgs";
 import {
   enqueueScan,
   getDeadLetter,
@@ -59,10 +59,9 @@ export function ScanQueueProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false;
     const ping = async () => {
       try {
-        const res = await fetch(
-          `${process.env.EXPO_PUBLIC_DOMAIN ? `https://${process.env.EXPO_PUBLIC_DOMAIN}` : "https://sgshajj.semicolon.sa"}/api/healthz`,
-          { method: "GET" },
-        );
+        const res = await fetch(`${SGS_BASE_URL}/api/healthz`, {
+          method: "GET",
+        });
         if (!cancelled) setOnline(res.ok || res.status < 500);
       } catch {
         if (!cancelled) setOnline(false);

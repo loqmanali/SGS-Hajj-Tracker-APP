@@ -23,13 +23,7 @@
     },
     "android": {
       "package": "com.semicolon.sgsbagscan",
-      "permissions": ["CAMERA", "VIBRATE", "FOREGROUND_SERVICE"],
-      "intentFilters": [
-        {
-          "action": "com.semicolon.sgsbagscan.SCAN",
-          "category": ["DEFAULT"]
-        }
-      ]
+      "permissions": ["CAMERA", "VIBRATE", "FOREGROUND_SERVICE"]
     },
     "web": {
       "favicon": "./assets/images/icon.png"
@@ -49,7 +43,8 @@
         {
           "cameraPermission": "SGS BagScan uses the camera to scan luggage tag barcodes."
         }
-      ]
+      ],
+      "./plugins/withZebraScan.js"
     ],
     "experiments": {
       "typedRoutes": true,

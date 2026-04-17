@@ -23,7 +23,13 @@
     },
     "android": {
       "package": "com.semicolon.sgsbagscan",
-      "permissions": ["CAMERA"]
+      "permissions": ["CAMERA", "VIBRATE", "FOREGROUND_SERVICE"],
+      "intentFilters": [
+        {
+          "action": "com.semicolon.sgsbagscan.SCAN",
+          "category": ["DEFAULT"]
+        }
+      ]
     },
     "web": {
       "favicon": "./assets/images/icon.png"

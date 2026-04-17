@@ -32,7 +32,32 @@ const queryClient = new QueryClient({
   },
 });
 
+import { useRouter, useSegments } from "expo-router";
+import { useAuth } from "@/contexts/AuthContext";
+import { useSession } from "@/contexts/SessionContext";
+
+const PUBLIC_ROUTES = new Set(["login", "index"]);
+
 function RootStack() {
+  const auth = useAuth();
+  const session = useSession();
+  const router = useRouter();
+  const segments = useSegments();
+
+  // Protected-route guard. Bounces unauthenticated users to /login and
+  // anyone trying to scan without a session back to /session-setup.
+  useEffect(() => {
+    if (!auth.ready) return;
+    const top = (segments[0] ?? "index") as string;
+    if (!auth.token && !PUBLIC_ROUTES.has(top)) {
+      router.replace("/login");
+      return;
+    }
+    if (auth.token && top === "scan" && !session.session) {
+      router.replace("/session-setup");
+    }
+  }, [auth.ready, auth.token, session.session, segments, router]);
+
   return (
     <Stack
       screenOptions={{

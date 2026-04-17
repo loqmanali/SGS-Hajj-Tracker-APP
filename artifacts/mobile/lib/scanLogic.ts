@@ -37,10 +37,10 @@ export function decideScan(args: {
   const bag = manifest.find((b) => b.tagNumber === tagNumber);
   if (!bag) {
     return {
-      flash: "orange",
-      title: "Unknown Tag",
+      flash: "red",
+      title: "NOT IN MANIFEST",
       subtitle: tagNumber,
-      hapticKey: "warning",
+      hapticKey: "error",
     };
   }
 

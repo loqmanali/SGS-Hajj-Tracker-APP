@@ -43,6 +43,7 @@ export default function ScanScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const [scannedCount, setScannedCount] = useState(0);
   const [expected, setExpected] = useState(0);
+  const [lastTag, setLastTag] = useState<string | null>(null);
   const lastScan = useRef<{ tag: string; at: number } | null>(null);
 
   useEffect(() => {
@@ -82,10 +83,16 @@ export default function ScanScreen() {
       const scannedTags = await getScannedTags(groupId);
 
       const decision = decideScan({ tagNumber: tag, groupId, manifest, scannedTags });
+      // When offline, override a green match to yellow to communicate
+      // "queued offline — will sync when SGS network returns".
+      const offlineQueued = decision.flash === "green" && !queue.online;
+      const flashColor = offlineQueued ? "yellow" : decision.flash;
+      const title = offlineQueued ? "QUEUED OFFLINE" : decision.title;
       trigger(
-        { color: decision.flash, title: decision.title, subtitle: decision.subtitle },
+        { color: flashColor, title, subtitle: decision.subtitle },
         decision.hapticKey,
       );
+      setLastTag(tag);
 
       if (decision.flash === "green") {
         await markTagScanned(groupId, tag);
@@ -102,6 +109,7 @@ export default function ScanScreen() {
       });
     },
     [isZebra, queue, session.session, trigger],
+    // queue.online is captured via closure each render; safe.
   );
 
   useZebraScanner(handleScan);
@@ -150,7 +158,11 @@ export default function ScanScreen() {
 
       <View style={styles.body}>
         {isZebra ? (
-          <ZebraIdleView />
+          <ZebraIdleView
+            lastTag={lastTag}
+            scanned={scannedCount}
+            expected={expected}
+          />
         ) : permission?.granted ? (
           cameraActive ? (
             <CameraView
@@ -221,13 +233,46 @@ export default function ScanScreen() {
   );
 }
 
-function ZebraIdleView() {
+function ZebraIdleView({
+  lastTag,
+  scanned,
+  expected,
+}: {
+  lastTag: string | null;
+  scanned: number;
+  expected: number;
+}) {
+  const pct = expected ? Math.min(1, scanned / expected) : 0;
+  // Conic-ish ring built from two halves rotated by progress.
+  const angle = pct * 360;
   return (
     <View style={styles.zebraWrap}>
-      <Feather name="maximize" size={72} color={colors.sgs.green} />
-      <Text style={styles.zebraTitle}>Ready to Scan</Text>
+      <View style={styles.ring}>
+        <View
+          style={[
+            styles.ringFill,
+            { transform: [{ rotate: `${Math.min(180, angle)}deg` }] },
+          ]}
+        />
+        {angle > 180 ? (
+          <View
+            style={[
+              styles.ringFill,
+              styles.ringFillBack,
+              { transform: [{ rotate: `${angle - 180}deg` }] },
+            ]}
+          />
+        ) : null}
+        <View style={styles.ringInner}>
+          <Text style={styles.ringPct}>{Math.round(pct * 100)}%</Text>
+          <Text style={styles.ringSub}>
+            {scanned}/{expected}
+          </Text>
+        </View>
+      </View>
+      <Text style={styles.zebraTitle}>{lastTag ?? "Ready to Scan"}</Text>
       <Text style={styles.zebraSub}>
-        Press the trigger to scan a luggage tag
+        {lastTag ? "Last scanned tag" : "Press the trigger to scan a luggage tag"}
       </Text>
     </View>
   );
@@ -313,8 +358,8 @@ const styles = StyleSheet.create({
   },
   reticle: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center" },
   reticleBox: {
-    width: "78%",
-    aspectRatio: 1.6,
+    width: "85%",
+    height: 110,
     borderColor: colors.sgs.green,
     borderWidth: 3,
     borderRadius: 14,
@@ -336,6 +381,51 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 14,
     paddingHorizontal: 32,
+  },
+  ring: {
+    width: 200,
+    height: 200,
+    borderRadius: 100,
+    backgroundColor: colors.sgs.surface,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+    marginBottom: 12,
+  },
+  ringFill: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    width: 200,
+    height: 200,
+    borderRadius: 100,
+    backgroundColor: colors.sgs.green,
+    transformOrigin: "100% 50%" as unknown as string,
+    // First half rotates from the right edge (0-180deg).
+    // We mask the left half with absolute positioning so only the rotated
+    // sweep is visible.
+  },
+  ringFillBack: {
+    transformOrigin: "0% 50%" as unknown as string,
+  },
+  ringInner: {
+    width: 160,
+    height: 160,
+    borderRadius: 80,
+    backgroundColor: colors.sgs.black,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  ringPct: {
+    color: colors.sgs.textPrimary,
+    fontFamily: FONTS.bodyBold,
+    fontSize: 36,
+  },
+  ringSub: {
+    color: colors.sgs.textMuted,
+    fontFamily: FONTS.body,
+    fontSize: 14,
+    marginTop: 4,
   },
   zebraTitle: {
     color: colors.sgs.textPrimary,

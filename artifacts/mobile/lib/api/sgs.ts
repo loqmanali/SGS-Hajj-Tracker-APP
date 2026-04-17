@@ -140,6 +140,16 @@ export interface ManifestBag {
   groupId: string;
   flightId: string;
   status: "pending" | "scanned" | "missing" | "exception";
+  /**
+   * Optional IATA Resolution 740 license plate (e.g. "0065SV456953")
+   * printed on the airline's bag tag. The SGS workflow expects agents
+   * to scan whichever tag is physically on the bag — sometimes the
+   * SGS-printed tag, sometimes the airline tag. Storing both lets the
+   * offline matcher (`decideScan`) flash green when an agent scans the
+   * airline tag for a bag that's on the manifest. Absent when the
+   * backend hasn't recorded the airline tag for this bag yet.
+   */
+  iataTag?: string;
 }
 
 export interface ScanRequest {
@@ -232,6 +242,15 @@ interface ServerBag {
   exceptionType?: string | null;
   noTag?: boolean;
   surrogateTag?: string | null;
+  // The SGS backend has used several names for the airline IATA license
+  // plate across builds. Accept any of them so the field lights up the
+  // moment the server starts emitting it, without needing a coordinated
+  // client release.
+  iataTag?: string | null;
+  iataLicensePlate?: string | null;
+  licensePlate?: string | null;
+  airlineTag?: string | null;
+  airlineBagTag?: string | null;
 }
 
 function normalizeFlight(f: ServerFlight): Flight {
@@ -298,7 +317,33 @@ function normalizeBag(b: ServerBag): ManifestBag {
     groupId: String(b.flightGroupId ?? b.groupId ?? ""),
     flightId: String(b.flightId ?? ""),
     status,
+    iataTag: normalizeIataTag(
+      b.iataTag ?? b.iataLicensePlate ?? b.licensePlate ?? b.airlineTag ?? b.airlineBagTag,
+    ),
   };
+}
+
+/**
+ * Strip whitespace and normalize an airline IATA tag to its compact
+ * digits-only form ("0065 SV 456953" -> "0065SV456953" before scanning,
+ * but the live-printed plate is always digits, so once stripped we
+ * expect 10-13 digits). Returns undefined for absent / malformed values
+ * so the offline matcher never compares against an empty string and
+ * accidentally matches the empty raw scan.
+ */
+function normalizeIataTag(raw: string | null | undefined): string | undefined {
+  if (raw == null) return undefined;
+  // Uppercase + strip whitespace so a backend that stores "0065sv456953"
+  // still matches a scanner payload of "0065SV456953". `normalizeTag`
+  // (used on every raw scan) doesn't change case, so we anchor on
+  // upper-case here for a single canonical form.
+  const v = String(raw).replace(/\s+/g, "").trim().toUpperCase();
+  if (!v) return undefined;
+  // Be permissive on shape — keep whatever the server stored (it might
+  // include a check digit or alphabetic airline code suffix on legacy
+  // builds). The decideScan match is exact, so noise here just means
+  // no match, never a false positive.
+  return v;
 }
 
 function normalizeStationCode(raw: string | undefined): string | undefined {

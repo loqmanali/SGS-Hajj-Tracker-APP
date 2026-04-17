@@ -39,16 +39,36 @@ export function decideScan(args: {
     };
   }
 
-  if (scannedTags.has(tagNumber)) {
+  // Look up by either the SGS-printed tag or the airline IATA license
+  // plate — agents may scan whichever is physically on the bag, and the
+  // manifest stores both. Match the SGS tag first since it's the
+  // canonical key for the offline scanned-set / queue / dead-letter.
+  const bag = manifest.find(
+    (b) => b.tagNumber === tagNumber || (b.iataTag && b.iataTag === tagNumber),
+  );
+
+  // Duplicate check considers both the raw scanned value and, if we
+  // resolved a bag, that bag's *other* identifier — otherwise an agent
+  // who scanned the SGS tag and then the airline tag for the same bag
+  // would get a misleading green/COLLECTED on the second scan.
+  const otherTag = bag
+    ? bag.tagNumber === tagNumber
+      ? bag.iataTag
+      : bag.tagNumber
+    : undefined;
+  if (
+    scannedTags.has(tagNumber) ||
+    (otherTag && scannedTags.has(otherTag))
+  ) {
     return {
       flash: "amber",
       title: "Already Scanned",
       subtitle: tagNumber,
       hapticKey: "duplicate",
+      bag,
     };
   }
 
-  const bag = manifest.find((b) => b.tagNumber === tagNumber);
   if (!bag) {
     return {
       flash: "red",

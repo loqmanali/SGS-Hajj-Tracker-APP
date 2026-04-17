@@ -15,7 +15,64 @@ const KEYS = {
   queue: "sgs:scanQueue",
   deadLetter: "sgs:scanDeadLetter",
   lastSync: (groupId: string) => `sgs:lastSync:${groupId}`,
+  flightsCache: "sgs:flightsCache",
+  flightsCacheAt: "sgs:flightsCacheAt",
+  assignmentsCache: "sgs:assignmentsCache",
+  groupsCache: (flightId: string) => `sgs:groupsCache:${flightId}`,
+  groupsCacheAt: (flightId: string) => `sgs:groupsCacheAt:${flightId}`,
 };
+
+// ---------- Flights / groups offline cache ----------
+
+export async function cacheFlights<T>(flights: T) {
+  await AsyncStorage.multiSet([
+    [KEYS.flightsCache, JSON.stringify(flights)],
+    [KEYS.flightsCacheAt, new Date().toISOString()],
+  ]);
+}
+
+export async function getCachedFlights<T>(): Promise<{
+  data: T | null;
+  cachedAt: string | null;
+}> {
+  const [[, raw], [, at]] = await AsyncStorage.multiGet([
+    KEYS.flightsCache,
+    KEYS.flightsCacheAt,
+  ]);
+  return {
+    data: raw ? (JSON.parse(raw) as T) : null,
+    cachedAt: at ?? null,
+  };
+}
+
+export async function cacheAssignments<T>(assignments: T) {
+  await AsyncStorage.setItem(KEYS.assignmentsCache, JSON.stringify(assignments));
+}
+
+export async function getCachedAssignments<T>(): Promise<T | null> {
+  const raw = await AsyncStorage.getItem(KEYS.assignmentsCache);
+  return raw ? (JSON.parse(raw) as T) : null;
+}
+
+export async function cacheGroups<T>(flightId: string, groups: T) {
+  await AsyncStorage.multiSet([
+    [KEYS.groupsCache(flightId), JSON.stringify(groups)],
+    [KEYS.groupsCacheAt(flightId), new Date().toISOString()],
+  ]);
+}
+
+export async function getCachedGroups<T>(
+  flightId: string,
+): Promise<{ data: T | null; cachedAt: string | null }> {
+  const [[, raw], [, at]] = await AsyncStorage.multiGet([
+    KEYS.groupsCache(flightId),
+    KEYS.groupsCacheAt(flightId),
+  ]);
+  return {
+    data: raw ? (JSON.parse(raw) as T) : null,
+    cachedAt: at ?? null,
+  };
+}
 
 export async function cacheManifest(groupId: string, bags: ManifestBag[]) {
   await AsyncStorage.multiSet([

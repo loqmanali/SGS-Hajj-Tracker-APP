@@ -22,7 +22,7 @@ import { useScanQueue } from "@/contexts/ScanQueueContext";
 import { useSession } from "@/contexts/SessionContext";
 import { useFlashFeedback } from "@/hooks/useFlashFeedback";
 import { useIsZebraDevice, useZebraScanner } from "@/hooks/useScanner";
-import { decideScan } from "@/lib/scanLogic";
+import { decideScan, normalizeTag } from "@/lib/scanLogic";
 import {
   getCachedManifest,
   getScannedTags,
@@ -65,7 +65,7 @@ export default function ScanScreen() {
   const handleScan = useCallback(
     async (raw: string) => {
       if (!session.session) return;
-      const tag = raw.trim();
+      const tag = normalizeTag(raw);
       if (!tag) return;
       const now = Date.now();
       if (

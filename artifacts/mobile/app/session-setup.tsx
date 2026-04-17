@@ -1,5 +1,14 @@
 import { Feather } from "@expo/vector-icons";
 import { useQueries, useQuery } from "@tanstack/react-query";
+import {
+  cacheAssignments,
+  cacheFlights,
+  cacheGroups,
+  getCachedAssignments,
+  getCachedFlights,
+  getCachedGroups,
+} from "@/lib/db/storage";
+import type { BagGroup as BagGroupT, Flight as FlightT } from "@/lib/api/sgs";
 import { useRouter } from "expo-router";
 import React, { useState } from "react";
 import {
@@ -34,13 +43,43 @@ export default function SessionSetupScreen() {
   const [progressText, setProgressText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const [flightsCacheAt, setFlightsCacheAt] = useState<string | null>(null);
+  const [groupsCacheAt, setGroupsCacheAt] = useState<string | null>(null);
+
   const [flightsQ, assignmentsQ] = useQueries({
     queries: [
-      { queryKey: ["flights"], queryFn: sgsApi.flights },
+      {
+        queryKey: ["flights"],
+        // Try the network first; fall back to AsyncStorage on failure so the
+        // screen is usable when the agent is on a poor SGS connection.
+        queryFn: async () => {
+          try {
+            const fresh = await sgsApi.flights();
+            await cacheFlights(fresh);
+            setFlightsCacheAt(new Date().toISOString());
+            return fresh;
+          } catch (err) {
+            const cached = await getCachedFlights<FlightT[]>();
+            if (cached.data) {
+              setFlightsCacheAt(cached.cachedAt);
+              return cached.data;
+            }
+            throw err;
+          }
+        },
+      },
       {
         queryKey: ["assignments"],
-        queryFn: sgsApi.flightAssignments,
-        // Assignments are nice-to-have; failure should not block the screen.
+        queryFn: async () => {
+          try {
+            const fresh = await sgsApi.flightAssignments();
+            await cacheAssignments(fresh);
+            return fresh;
+          } catch {
+            const cached = await getCachedAssignments<{ flightIds: string[] }>();
+            return cached ?? { flightIds: [] };
+          }
+        },
         retry: 0,
       },
     ],
@@ -60,7 +99,21 @@ export default function SessionSetupScreen() {
 
   const groupsQ = useQuery({
     queryKey: ["groups", selectedFlight?.id],
-    queryFn: () => sgsApi.groups(selectedFlight!.id),
+    queryFn: async () => {
+      try {
+        const fresh = await sgsApi.groups(selectedFlight!.id);
+        await cacheGroups(selectedFlight!.id, fresh);
+        setGroupsCacheAt(new Date().toISOString());
+        return fresh;
+      } catch (err) {
+        const cached = await getCachedGroups<BagGroupT[]>(selectedFlight!.id);
+        if (cached.data) {
+          setGroupsCacheAt(cached.cachedAt);
+          return cached.data;
+        }
+        throw err;
+      }
+    },
     enabled: !!selectedFlight,
   });
 
@@ -93,7 +146,11 @@ export default function SessionSetupScreen() {
       <View style={styles.flex}>
         <ScreenHeader
           title="Select Flight"
-          subtitle={auth.user?.name}
+          subtitle={
+            flightsCacheAt && flightsQ.isError
+              ? `Offline · cached ${formatTimeAgo(flightsCacheAt)}`
+              : auth.user?.name
+          }
           showLogo
           right={
             <Pressable onPress={() => auth.signOut()} hitSlop={12}>
@@ -135,7 +192,11 @@ export default function SessionSetupScreen() {
     <View style={styles.flex}>
       <ScreenHeader
         title={selectedFlight.flightNumber}
-        subtitle={selectedFlight.destination}
+        subtitle={
+          groupsCacheAt && groupsQ.isError
+            ? `Offline · cached ${formatTimeAgo(groupsCacheAt)}`
+            : selectedFlight.destination
+        }
         onBack={() => setSelectedFlight(null)}
       />
       {groupsQ.isLoading ? (
@@ -201,6 +262,14 @@ export default function SessionSetupScreen() {
       ) : null}
     </View>
   );
+}
+
+function formatTimeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  if (diff < 60_000) return "moments ago";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  return new Date(iso).toLocaleString();
 }
 
 function FlightCard({

@@ -14,6 +14,8 @@ import * as Device from "expo-device";
 import { useEffect, useRef, useState } from "react";
 import { DeviceEventEmitter, Platform } from "react-native";
 
+import { normalizeTag } from "@/lib/scanLogic";
+
 const ZEBRA_MANUFACTURERS = ["zebra", "zebra technologies"];
 const ZEBRA_MODELS = ["TC57HO", "TC72", "TC77", "MC93"];
 
@@ -40,7 +42,11 @@ export function useZebraScanner(onBarcode: (data: string) => void) {
     const sub = DeviceEventEmitter.addListener(
       "ZebraScan",
       (event: { data?: string }) => {
-        if (event?.data) cb.current(event.data);
+        if (!event?.data) return;
+        // GS1 control chars + AIM prefix stripping happens here so every
+        // downstream consumer sees a clean tag string.
+        const clean = normalizeTag(event.data);
+        if (clean) cb.current(clean);
       },
     );
     return () => sub.remove();

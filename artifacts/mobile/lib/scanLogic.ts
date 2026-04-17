@@ -25,6 +25,18 @@ export function decideScan(args: {
 }): ScanDecision {
   const { tagNumber, groupId, manifest, scannedTags } = args;
 
+  // SGS Hajj bag tags use a fixed prefix-and-length contract (typically
+  // "SGS" + 10-13 alphanumeric chars). Anything else came from a foreign
+  // barcode (airline tag, food packaging, etc.) and is out-of-scope.
+  if (!isSgsHajjTag(tagNumber)) {
+    return {
+      flash: "orange",
+      title: "OUT OF SCOPE",
+      subtitle: tagNumber,
+      hapticKey: "warning",
+    };
+  }
+
   if (scannedTags.has(tagNumber)) {
     return {
       flash: "amber",
@@ -56,9 +68,29 @@ export function decideScan(args: {
 
   return {
     flash: "green",
-    title: "Match",
+    title: "COLLECTED",
     subtitle: bag.pilgrimName,
     hapticKey: "success",
     bag,
   };
+}
+
+/**
+ * Strips DataWedge / GS1 control characters and validates the SGS Hajj
+ * bag-tag prefix and length contract. Use this on every scan source
+ * (Zebra trigger or camera) before passing to decideScan.
+ */
+export function normalizeTag(raw: string): string {
+  // Strip ASCII control chars (GS=0x1D, RS=0x1E, EOT=0x04, NUL, etc.) and
+  // any AIM identifier prefix DataWedge prepends ("]C1", "]d2", ...).
+  let v = raw.replace(/[\x00-\x1F\x7F]/g, "").trim();
+  v = v.replace(/^\]\w{2}/, "");
+  return v;
+}
+
+export function isSgsHajjTag(tag: string): boolean {
+  if (!tag) return false;
+  // SGS prefix + 10-15 alphanumeric body. Tolerant to allow operator tools
+  // to evolve the body length without immediately invalidating the app.
+  return /^SGS[A-Z0-9]{8,15}$/i.test(tag);
 }

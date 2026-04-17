@@ -17,8 +17,9 @@ import { PrimaryButton } from "@/components/PrimaryButton";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { FONTS } from "@/constants/branding";
 import colors from "@/constants/colors";
+import { useLocale } from "@/contexts/LocaleContext";
+import { useScanQueue } from "@/contexts/ScanQueueContext";
 import { useSession } from "@/contexts/SessionContext";
-import { sgsApi } from "@/lib/api/sgs";
 
 const REASONS = [
   { value: "MISSING", label: "Missing" },
@@ -30,6 +31,8 @@ const REASONS = [
 export default function ExceptionScreen() {
   const router = useRouter();
   const session = useSession();
+  const queue = useScanQueue();
+  const { t } = useLocale();
   const insets = useSafeAreaInsets();
   // Accept ?tag=... from the scan screen so a red flash on a real tag
   // pre-fills the form. Falls back to empty for direct nav from the
@@ -51,16 +54,23 @@ export default function ExceptionScreen() {
     }
     setBusy(true);
     try {
-      await sgsApi.submitException({
+      // Always go through the queue. When online the queue drains
+      // immediately; when offline the entry persists with retry/backoff
+      // so the agent never has to remember the tag and re-enter it once
+      // connectivity returns.
+      await queue.enqueueException({
         tagNumber: tag.trim(),
         groupId: session.session!.group.id,
         flightId: session.session!.flight.id,
         reason,
         notes: notes.trim() || undefined,
       });
-      Alert.alert("Logged", "Exception recorded.", [
-        { text: "OK", onPress: () => router.back() },
-      ]);
+      const offline = !queue.online;
+      Alert.alert(
+        offline ? t("queuedOffline") : t("logged"),
+        offline ? t("exceptionQueuedBody") : t("exceptionLoggedBody"),
+        [{ text: "OK", onPress: () => router.back() }],
+      );
     } catch (err) {
       Alert.alert("Failed", (err as Error).message);
     } finally {

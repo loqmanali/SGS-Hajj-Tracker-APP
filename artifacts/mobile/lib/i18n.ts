@@ -65,7 +65,18 @@ const en = {
   cameraSettings: "Enable camera access in system settings.",
   openSettings: "Open settings",
   scansFailed: "scan(s) failed to upload.",
+  itemsFailed: "item(s) failed to upload.",
   discard: "Discard",
+  queuedOffline: "Queued offline — will sync",
+  logged: "Logged",
+  exceptionLoggedBody: "Exception recorded.",
+  exceptionQueuedBody:
+    "Exception saved on this device. It will upload automatically when the SGS network is back.",
+  tagGenerated: "Tag generated",
+  noTagGeneratedBody: "Affix to bag and continue scanning.",
+  noTagQueuedBody:
+    "Local tag issued. Affix it to the bag now — the bag will sync to the server when the network is back.",
+  pendingOps: "Pending updates",
 
   // Shift summary
   shiftSummary: "Shift Summary",
@@ -179,7 +190,18 @@ const ar: Dict = {
   cameraSettings: "فعّل الكاميرا من إعدادات النظام.",
   openSettings: "فتح الإعدادات",
   scansFailed: "عملية مسح فشلت في الرفع.",
+  itemsFailed: "عنصر فشل في الرفع.",
   discard: "تجاهل",
+  queuedOffline: "محفوظ بدون اتصال — سيُرفع عند عودة الشبكة",
+  logged: "تم التسجيل",
+  exceptionLoggedBody: "تم تسجيل الاستثناء.",
+  exceptionQueuedBody:
+    "تم حفظ الاستثناء على الجهاز. سيُرفع تلقائياً عند عودة شبكة SGS.",
+  tagGenerated: "تم إنشاء البطاقة",
+  noTagGeneratedBody: "ألصق البطاقة على الحقيبة وتابع المسح.",
+  noTagQueuedBody:
+    "تم إصدار بطاقة محلية. ألصقها على الحقيبة الآن — سيتم رفعها عند عودة الشبكة.",
+  pendingOps: "تحديثات معلقة",
 
   shiftSummary: "ملخص الوردية",
   totals: "الإجماليات",

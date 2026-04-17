@@ -178,11 +178,11 @@ export default function ScanScreen() {
         }
       />
 
-      {queue.deadLetterSize > 0 ? (
+      {queue.deadLetterTotal > 0 ? (
         <View style={styles.dlBanner}>
           <Feather name="alert-circle" size={16} color={colors.sgs.black} />
           <Text style={styles.dlText}>
-            {queue.deadLetterSize} {t("scansFailed")}
+            {queue.deadLetterTotal} {t("itemsFailed")}
           </Text>
           <Pressable onPress={queue.retryDeadLetter} style={styles.dlBtn}>
             <Text style={styles.dlBtnTxt}>{t("retry")}</Text>
@@ -266,7 +266,7 @@ export default function ScanScreen() {
             icon="refresh-cw"
             label={t("syncNow")}
             onPress={() => queue.syncNow()}
-            disabled={queue.syncing || queue.queueSize === 0}
+            disabled={queue.syncing || queue.pendingTotal === 0}
           />
           <FooterButton
             icon="x-circle"

@@ -15,13 +15,16 @@ import { PrimaryButton } from "@/components/PrimaryButton";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import colors from "@/constants/colors";
 import { useAuth } from "@/contexts/AuthContext";
+import { useLocale } from "@/contexts/LocaleContext";
+import { useScanQueue } from "@/contexts/ScanQueueContext";
 import { useSession } from "@/contexts/SessionContext";
-import { sgsApi } from "@/lib/api/sgs";
 
 export default function NoTagScreen() {
   const router = useRouter();
   const session = useSession();
   const auth = useAuth();
+  const queue = useScanQueue();
+  const { t } = useLocale();
   const insets = useSafeAreaInsets();
 
   const [pilgrimName, setPilgrimName] = useState("");
@@ -40,7 +43,11 @@ export default function NoTagScreen() {
     }
     setBusy(true);
     try {
-      const res = await sgsApi.registerNoTag({
+      // Always queue. The queue immediately mints a local placeholder tag
+      // (NOTAG-<station>-LOCAL-<6char>) the agent can affix to the bag
+      // right now; when the entry drains, the placeholder is swapped for
+      // the backend-issued tag in the local scanned set.
+      const { placeholderTag } = await queue.enqueueNoTag({
         pilgrimName: pilgrimName.trim(),
         description: description.trim(),
         groupId: session.session!.group.id,
@@ -50,9 +57,10 @@ export default function NoTagScreen() {
         // an unknown station segment.
         stationCode: auth.user?.stationCode,
       });
+      const offline = !queue.online;
       Alert.alert(
-        "Tag generated",
-        `New tag: ${res.tagNumber}\n\nAffix to bag and continue scanning.`,
+        offline ? t("queuedOffline") : t("tagGenerated"),
+        `${offline ? t("noTagQueuedBody") : t("noTagGeneratedBody")}\n\n${placeholderTag}`,
         [{ text: "OK", onPress: () => router.back() }],
       );
     } catch (err) {

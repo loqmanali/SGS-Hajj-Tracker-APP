@@ -14,6 +14,8 @@ const KEYS = {
   scanned: (groupId: string) => `sgs:scanned:${groupId}`,
   queue: "sgs:scanQueue",
   deadLetter: "sgs:scanDeadLetter",
+  opsQueue: "sgs:opsQueue",
+  opsDeadLetter: "sgs:opsDeadLetter",
   lastSync: (groupId: string) => `sgs:lastSync:${groupId}`,
   flightsCache: "sgs:flightsCache",
   flightsCacheAt: "sgs:flightsCacheAt",
@@ -22,6 +24,8 @@ const KEYS = {
   groupsCacheAt: (flightId: string) => `sgs:groupsCacheAt:${flightId}`,
   deviceId: "sgs:deviceId",
 };
+
+export const STORAGE_KEYS = KEYS;
 
 // ---------- Stable per-install device id ----------
 
@@ -198,6 +202,137 @@ export async function moveToDeadLetter(item: QueuedScan) {
 export async function getDeadLetter(): Promise<QueuedScan[]> {
   const raw = await AsyncStorage.getItem(KEYS.deadLetter);
   return raw ? (JSON.parse(raw) as QueuedScan[]) : [];
+}
+
+// ---------- Generic ops queue (exceptions + no-tag) ----------
+//
+// Parallel to the scan queue. Same retry / backoff / dead-letter shape, but
+// the payload is one of two discriminated kinds so we can route to the right
+// API call when draining. Keeping it separate from the scan queue avoids
+// destabilising a critical, well-tested code path.
+
+export type OpKind = "exception" | "noTag";
+
+export interface ExceptionOpPayload {
+  tagNumber: string;
+  groupId: string;
+  flightId: string;
+  reason: string;
+  notes?: string;
+  stage?: "BELT" | "LOADING" | "TRANSIT" | "DELIVERY";
+}
+
+export interface NoTagOpPayload {
+  pilgrimName: string;
+  description: string;
+  groupId: string;
+  flightId: string;
+  stationCode?: string;
+  /**
+   * Local placeholder tag (e.g. NOTAG-JED-LOCAL-a3f2b1) generated when the
+   * agent submits offline. Affixed to the bag immediately so the bag is
+   * trackable; replaced by the backend-issued tag once sync succeeds.
+   */
+  placeholderTag: string;
+}
+
+export type QueuedOp =
+  | {
+      localId: string;
+      kind: "exception";
+      attempts: number;
+      lastError?: string;
+      nextAttemptAt?: number;
+      createdAt: string;
+      payload: ExceptionOpPayload;
+    }
+  | {
+      localId: string;
+      kind: "noTag";
+      attempts: number;
+      lastError?: string;
+      nextAttemptAt?: number;
+      createdAt: string;
+      payload: NoTagOpPayload;
+    };
+
+function makeLocalId(): string {
+  return Date.now().toString() + Math.random().toString(36).slice(2, 8);
+}
+
+export async function enqueueOp(
+  op:
+    | { kind: "exception"; payload: ExceptionOpPayload }
+    | { kind: "noTag"; payload: NoTagOpPayload },
+): Promise<QueuedOp> {
+  const queue = await getOpQueue();
+  const item = {
+    localId: makeLocalId(),
+    kind: op.kind,
+    attempts: 0,
+    createdAt: new Date().toISOString(),
+    payload: op.payload,
+  } as QueuedOp;
+  queue.push(item);
+  await AsyncStorage.setItem(KEYS.opsQueue, JSON.stringify(queue));
+  return item;
+}
+
+export async function getOpQueue(): Promise<QueuedOp[]> {
+  const raw = await AsyncStorage.getItem(KEYS.opsQueue);
+  return raw ? (JSON.parse(raw) as QueuedOp[]) : [];
+}
+
+export async function setOpQueue(queue: QueuedOp[]) {
+  await AsyncStorage.setItem(KEYS.opsQueue, JSON.stringify(queue));
+}
+
+export async function moveOpToDeadLetter(item: QueuedOp) {
+  const raw = await AsyncStorage.getItem(KEYS.opsDeadLetter);
+  const dl = raw ? (JSON.parse(raw) as QueuedOp[]) : [];
+  dl.push(item);
+  await AsyncStorage.setItem(KEYS.opsDeadLetter, JSON.stringify(dl));
+}
+
+export async function getOpDeadLetter(): Promise<QueuedOp[]> {
+  const raw = await AsyncStorage.getItem(KEYS.opsDeadLetter);
+  return raw ? (JSON.parse(raw) as QueuedOp[]) : [];
+}
+
+export async function clearOpDeadLetter() {
+  await AsyncStorage.removeItem(KEYS.opsDeadLetter);
+}
+
+/**
+ * Builds a human-readable, locally-unique placeholder tag for a no-tag bag
+ * raised offline. Format: `NOTAG-<STATION>-LOCAL-<6char>`. The 6-char
+ * suffix is randomised so two agents working the same station can't collide
+ * even before the backend issues a real tag.
+ */
+export function buildPlaceholderTag(stationCode: string | undefined): string {
+  const station = (stationCode || "XXX").toUpperCase().slice(0, 3);
+  const suffix = Math.random().toString(36).slice(2, 8).toUpperCase();
+  return `NOTAG-${station}-LOCAL-${suffix}`;
+}
+
+/**
+ * Swap a tag in the per-group scanned set. Used after a queued no-tag op
+ * drains successfully so local counts stay correct: the placeholder we
+ * marked scanned at enqueue time is replaced with the backend-issued tag.
+ */
+export async function replaceScannedTag(
+  groupId: string,
+  oldTag: string,
+  newTag: string,
+) {
+  const set = await getScannedTags(groupId);
+  if (!set.has(oldTag) && set.has(newTag)) return;
+  set.delete(oldTag);
+  set.add(newTag);
+  await AsyncStorage.setItem(
+    KEYS.scanned(groupId),
+    JSON.stringify(Array.from(set)),
+  );
 }
 
 export async function clearAll() {

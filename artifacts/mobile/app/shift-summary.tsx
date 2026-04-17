@@ -201,6 +201,11 @@ export default function ShiftSummaryScreen() {
           />
           <Stat label={t("duration")} value={`${durationMin}m`} />
           <Stat label={t("pendingScans")} value={queue.queueSize} />
+          <Stat
+            label={t("pendingOps")}
+            value={queue.opsQueueSize}
+            accent={queue.opsQueueSize > 0 ? "amber" : undefined}
+          />
         </View>
 
         <Text style={styles.sectionLabel}>{t("syncStatus")}</Text>
@@ -225,8 +230,11 @@ export default function ShiftSummaryScreen() {
           </View>
           <Text style={styles.syncDim}>
             {t("pendingScans")}: {queue.queueSize}
-            {queue.deadLetterSize > 0
-              ? ` · ${t("failedScans")}: ${queue.deadLetterSize}`
+            {queue.opsQueueSize > 0
+              ? ` · ${t("pendingOps")}: ${queue.opsQueueSize}`
+              : ""}
+            {queue.deadLetterTotal > 0
+              ? ` · ${t("failedScans")}: ${queue.deadLetterTotal}`
               : ""}
           </Text>
           {auth.lastSyncAt ? (

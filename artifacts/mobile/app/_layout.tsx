@@ -18,9 +18,11 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
+import { BiometricLockGate } from "@/components/BiometricLockGate";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import colors from "@/constants/colors";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { LocaleProvider } from "@/contexts/LocaleContext";
 import { ScanQueueProvider } from "@/contexts/ScanQueueContext";
 import { SessionProvider } from "@/contexts/SessionContext";
 
@@ -53,7 +55,13 @@ function RootStack() {
       router.replace("/login");
       return;
     }
-    if (auth.token && top === "scan" && !session.session) {
+    if (
+      auth.token &&
+      (top === "scan" ||
+        top === "shift-summary" ||
+        top === "bulk-receive") &&
+      !session.session
+    ) {
       router.replace("/session-setup");
     }
   }, [auth.ready, auth.token, session.session, segments, router]);
@@ -90,16 +98,20 @@ export default function RootLayout() {
         <QueryClientProvider client={queryClient}>
           <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.sgs.black }}>
             <KeyboardProvider>
-              <AuthProvider>
-                <SessionProvider>
-                  <ScanQueueProvider>
-                    <View style={{ flex: 1, backgroundColor: colors.sgs.black }}>
-                      <StatusBar style="light" backgroundColor={colors.sgs.black} />
-                      <RootStack />
-                    </View>
-                  </ScanQueueProvider>
-                </SessionProvider>
-              </AuthProvider>
+              <LocaleProvider>
+                <AuthProvider>
+                  <SessionProvider>
+                    <ScanQueueProvider>
+                      <View style={{ flex: 1, backgroundColor: colors.sgs.black }}>
+                        <StatusBar style="light" backgroundColor={colors.sgs.black} />
+                        <BiometricLockGate>
+                          <RootStack />
+                        </BiometricLockGate>
+                      </View>
+                    </ScanQueueProvider>
+                  </SessionProvider>
+                </AuthProvider>
+              </LocaleProvider>
             </KeyboardProvider>
           </GestureHandlerRootView>
         </QueryClientProvider>

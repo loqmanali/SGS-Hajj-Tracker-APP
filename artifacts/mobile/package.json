@@ -60,6 +60,8 @@
     "@expo-google-fonts/tajawal": "^0.4.1",
     "expo-camera": "^17.0.10",
     "expo-device": "^8.0.10",
+    "expo-local-authentication": "^17.0.8",
+    "expo-localization": "^17.0.8",
     "expo-secure-store": "^15.0.8"
   }
 }

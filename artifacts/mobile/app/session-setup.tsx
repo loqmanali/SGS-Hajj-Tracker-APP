@@ -27,15 +27,18 @@ import { ScreenHeader } from "@/components/ScreenHeader";
 import { FONTS } from "@/constants/branding";
 import colors from "@/constants/colors";
 import { useAuth } from "@/contexts/AuthContext";
+import { useLocale } from "@/contexts/LocaleContext";
 import { useSession } from "@/contexts/SessionContext";
 import { sgsApi, type BagGroup, type Flight } from "@/lib/api/sgs";
 import { cacheManifest } from "@/lib/db/storage";
+import type { StringKey } from "@/lib/i18n";
 
 export default function SessionSetupScreen() {
   const router = useRouter();
   const auth = useAuth();
   const session = useSession();
   const insets = useSafeAreaInsets();
+  const { t, locale, setLocale } = useLocale();
 
   const [selectedFlight, setSelectedFlight] = useState<Flight | null>(null);
   const [pendingGroup, setPendingGroup] = useState<BagGroup | null>(null);
@@ -132,10 +135,12 @@ export default function SessionSetupScreen() {
     if (!selectedFlight) return;
     setBusy(true);
     setError(null);
-    setProgressText("Loading manifest…");
+    setProgressText(t("loadingManifest"));
     try {
       const manifest = await sgsApi.manifest(group.id);
-      setProgressText(`Loading manifest: ${manifest.length} bags`);
+      setProgressText(
+        t("loadingManifestN").replace("{n}", String(manifest.length)),
+      );
       await cacheManifest(group.id, manifest);
       await session.setSession({
         flight: selectedFlight,
@@ -144,7 +149,7 @@ export default function SessionSetupScreen() {
       });
       router.replace("/scan");
     } catch (err) {
-      setError((err as Error).message || "Could not load manifest.");
+      setError((err as Error).message || t("couldNotLoadManifest"));
       setPendingGroup(null);
     } finally {
       setBusy(false);
@@ -156,17 +161,33 @@ export default function SessionSetupScreen() {
     return (
       <View style={styles.flex}>
         <ScreenHeader
-          title="Select Flight"
+          title={t("selectFlight")}
           subtitle={
             flightsCacheAt && flightsQ.isError
-              ? `Offline · cached ${formatTimeAgo(flightsCacheAt)}`
+              ? `${t("offlineCached")} ${formatTimeAgo(flightsCacheAt, t)}`
               : auth.user?.name
           }
           showLogo
           right={
-            <Pressable onPress={() => auth.signOut()} hitSlop={12}>
-              <Feather name="log-out" size={20} color={colors.sgs.textMuted} />
-            </Pressable>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
+              <Pressable
+                onPress={() => setLocale(locale === "ar" ? "en" : "ar")}
+                hitSlop={10}
+              >
+                <Text
+                  style={{
+                    color: colors.sgs.textPrimary,
+                    fontFamily: FONTS.bodyMedium,
+                    fontSize: 13,
+                  }}
+                >
+                  {t("language")}
+                </Text>
+              </Pressable>
+              <Pressable onPress={() => auth.signOut()} hitSlop={12}>
+                <Feather name="log-out" size={20} color={colors.sgs.textMuted} />
+              </Pressable>
+            </View>
           }
         />
         {flightsQ.isLoading ? (
@@ -191,7 +212,7 @@ export default function SessionSetupScreen() {
               <FlightCard flight={item} onPress={() => setSelectedFlight(item)} />
             )}
             ListEmptyComponent={
-              <Text style={styles.empty}>No flights assigned today.</Text>
+              <Text style={styles.empty}>{t("noFlights")}</Text>
             }
           />
         )}
@@ -205,7 +226,7 @@ export default function SessionSetupScreen() {
         title={selectedFlight.flightNumber}
         subtitle={
           groupsCacheAt && groupsQ.isError
-            ? `Offline · cached ${formatTimeAgo(groupsCacheAt)}`
+            ? `${t("offlineCached")} ${formatTimeAgo(groupsCacheAt, t)}`
             : selectedFlight.destination
         }
         onBack={() => setSelectedFlight(null)}
@@ -232,7 +253,7 @@ export default function SessionSetupScreen() {
             <GroupCard group={item} onPress={() => setPendingGroup(item)} />
           )}
           ListEmptyComponent={
-            <Text style={styles.empty}>No groups for this flight.</Text>
+            <Text style={styles.empty}>{t("noGroups")}</Text>
           }
         />
       )}
@@ -244,27 +265,30 @@ export default function SessionSetupScreen() {
       {busy ? (
         <View pointerEvents="auto" style={styles.busyOverlay}>
           <ActivityIndicator color={colors.sgs.green} size="large" />
-          <Text style={styles.busyTxt}>{progressText ?? "Loading…"}</Text>
+          <Text style={styles.busyTxt}>{progressText ?? t("loading")}</Text>
         </View>
       ) : null}
       {pendingGroup ? (
         <View style={styles.confirmOverlay}>
           <View style={styles.confirmCard}>
-            <Text style={styles.confirmTitle}>Group {pendingGroup.groupNumber}</Text>
-            <Text style={styles.confirmSub}>
-              {pendingGroup.pilgrimCount} pilgrims · {pendingGroup.expectedBags} bags
+            <Text style={styles.confirmTitle}>
+              {t("groupLabel")} {pendingGroup.groupNumber}
             </Text>
             <Text style={styles.confirmSub}>
-              Flight {selectedFlight.flightNumber} · {selectedFlight.destination}
+              {pendingGroup.pilgrimCount} {t("pilgrims")} ·{" "}
+              {pendingGroup.expectedBags} {t("bags")}
+            </Text>
+            <Text style={styles.confirmSub}>
+              {selectedFlight.flightNumber} · {selectedFlight.destination}
             </Text>
             <View style={{ height: 16 }} />
             <PrimaryButton
-              label="START SCANNING"
+              label={t("startScanning")}
               onPress={() => startSession(pendingGroup)}
             />
             <View style={{ height: 8 }} />
             <PrimaryButton
-              label="Cancel"
+              label={t("cancel")}
               variant="ghost"
               onPress={() => setPendingGroup(null)}
             />
@@ -275,11 +299,13 @@ export default function SessionSetupScreen() {
   );
 }
 
-function formatTimeAgo(iso: string): string {
+function formatTimeAgo(iso: string, t: (k: StringKey) => string): string {
   const diff = Date.now() - new Date(iso).getTime();
-  if (diff < 60_000) return "moments ago";
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  if (diff < 60_000) return t("momentsAgo");
+  if (diff < 3_600_000)
+    return t("minutesAgo").replace("{n}", String(Math.floor(diff / 60_000)));
+  if (diff < 86_400_000)
+    return t("hoursAgo").replace("{n}", String(Math.floor(diff / 3_600_000)));
   return new Date(iso).toLocaleString();
 }
 
@@ -290,6 +316,7 @@ function FlightCard({
   flight: Flight;
   onPress: () => void;
 }) {
+  const { t } = useLocale();
   return (
     <Pressable
       onPress={onPress}
@@ -312,7 +339,7 @@ function FlightCard({
         </Text>
         <Text style={styles.metaTxt}>
           <Feather name="package" size={11} color={colors.sgs.textMuted} />{" "}
-          {flight.bagCount} bags
+          {flight.bagCount} {t("bags")}
         </Text>
       </View>
     </Pressable>
@@ -320,6 +347,7 @@ function FlightCard({
 }
 
 function GroupCard({ group, onPress }: { group: BagGroup; onPress: () => void }) {
+  const { t } = useLocale();
   const pct = group.expectedBags
     ? Math.min(100, Math.round((group.scannedBags / group.expectedBags) * 100))
     : 0;
@@ -329,17 +357,19 @@ function GroupCard({ group, onPress }: { group: BagGroup; onPress: () => void })
       style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
     >
       <View style={styles.cardRow}>
-        <Text style={styles.cardTitle}>Group {group.groupNumber}</Text>
+        <Text style={styles.cardTitle}>
+          {t("groupLabel")} {group.groupNumber}
+        </Text>
         {group.assigned ? <AssignedBadge /> : null}
       </View>
       <Text style={styles.cardSub}>
-        {group.pilgrimCount} pilgrims · {group.expectedBags} bags
+        {group.pilgrimCount} {t("pilgrims")} · {group.expectedBags} {t("bags")}
       </Text>
       <View style={styles.progressTrack}>
         <View style={[styles.progressFill, { width: `${pct}%` }]} />
       </View>
       <Text style={styles.metaTxt}>
-        {group.scannedBags}/{group.expectedBags} scanned · {pct}%
+        {group.scannedBags}/{group.expectedBags} {t("scannedSuffix")} · {pct}%
       </Text>
     </Pressable>
   );
@@ -352,11 +382,12 @@ function ErrorState({
   message: string;
   onRetry: () => void;
 }) {
+  const { t } = useLocale();
   return (
     <View style={styles.center}>
       <Feather name="wifi-off" size={36} color={colors.sgs.textDim} />
       <Text style={styles.errMsg}>{message}</Text>
-      <PrimaryButton label="Retry" onPress={onRetry} variant="ghost" />
+      <PrimaryButton label={t("retry")} onPress={onRetry} variant="ghost" />
     </View>
   );
 }

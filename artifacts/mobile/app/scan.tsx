@@ -18,6 +18,7 @@ import { StatusPill } from "@/components/StatusPill";
 import { FONTS } from "@/constants/branding";
 import colors from "@/constants/colors";
 import { useAuth } from "@/contexts/AuthContext";
+import { useLocale } from "@/contexts/LocaleContext";
 import { useScanQueue } from "@/contexts/ScanQueueContext";
 import { useSession } from "@/contexts/SessionContext";
 import { useFlashFeedback } from "@/hooks/useFlashFeedback";
@@ -39,6 +40,7 @@ export default function ScanScreen() {
   const isZebra = useIsZebraDevice();
   const { flash, trigger } = useFlashFeedback();
   const insets = useSafeAreaInsets();
+  const { t } = useLocale();
 
   const [permission, requestPermission] = useCameraPermissions();
   const [scannedCount, setScannedCount] = useState(0);
@@ -129,8 +131,8 @@ export default function ScanScreen() {
   return (
     <View style={styles.flex}>
       <ScreenHeader
-        title={`${session.session.flight.flightNumber} · Group ${session.session.group.groupNumber}`}
-        subtitle={`${scannedCount}/${expected} bags · ${pct}%`}
+        title={`${session.session.flight.flightNumber} · ${t("groupLabel")} ${session.session.group.groupNumber}`}
+        subtitle={`${scannedCount}/${expected} ${t("bags")} · ${pct}%`}
         right={
           <StatusPill
             online={queue.online}
@@ -144,14 +146,13 @@ export default function ScanScreen() {
         <View style={styles.dlBanner}>
           <Feather name="alert-circle" size={16} color={colors.sgs.black} />
           <Text style={styles.dlText}>
-            {queue.deadLetterSize} scan{queue.deadLetterSize === 1 ? "" : "s"}{" "}
-            failed to upload.
+            {queue.deadLetterSize} {t("scansFailed")}
           </Text>
           <Pressable onPress={queue.retryDeadLetter} style={styles.dlBtn}>
-            <Text style={styles.dlBtnTxt}>Retry</Text>
+            <Text style={styles.dlBtnTxt}>{t("retry")}</Text>
           </Pressable>
           <Pressable onPress={queue.discardDeadLetter} style={styles.dlBtn}>
-            <Text style={styles.dlBtnTxt}>Discard</Text>
+            <Text style={styles.dlBtnTxt}>{t("discard")}</Text>
           </Pressable>
         </View>
       ) : null}
@@ -185,7 +186,7 @@ export default function ScanScreen() {
         {!isZebra && permission?.granted ? (
           <View pointerEvents="none" style={styles.reticle}>
             <View style={styles.reticleBox} />
-            <Text style={styles.reticleHint}>Align bag tag inside the frame</Text>
+            <Text style={styles.reticleHint}>{t("alignTag")}</Text>
           </View>
         ) : null}
 
@@ -202,31 +203,33 @@ export default function ScanScreen() {
         <View style={styles.footerRow}>
           <FooterButton
             icon="alert-triangle"
-            label="Exception"
+            label={t("exception")}
             onPress={() => router.push("/exception")}
           />
           <FooterButton
             icon="edit-3"
-            label="No Tag"
+            label={t("noTag")}
             onPress={() => router.push("/no-tag")}
           />
           <FooterButton
+            icon="layers"
+            label={t("bulkReceive")}
+            onPress={() => router.push("/bulk-receive")}
+          />
+          <FooterButton
             icon="refresh-cw"
-            label="Sync Now"
+            label={t("syncNow")}
             onPress={() => queue.syncNow()}
             disabled={queue.syncing || queue.queueSize === 0}
           />
           <FooterButton
             icon="x-circle"
-            label="End"
-            onPress={async () => {
-              await session.setSession(null);
-              router.replace("/session-setup");
-            }}
+            label={t("end")}
+            onPress={() => router.push("/shift-summary")}
           />
         </View>
         <Text style={styles.footerAgent}>
-          {auth.user?.name} · {isZebra ? "Zebra DataWedge" : "Camera mode"}
+          {auth.user?.name} · {isZebra ? t("zebraMode") : t("cameraMode")}
         </Text>
       </View>
     </View>
@@ -242,6 +245,7 @@ function ZebraIdleView({
   scanned: number;
   expected: number;
 }) {
+  const { t } = useLocale();
   const pct = expected ? Math.min(1, scanned / expected) : 0;
   // Conic-ish ring built from two halves rotated by progress.
   const angle = pct * 360;
@@ -270,9 +274,9 @@ function ZebraIdleView({
           </Text>
         </View>
       </View>
-      <Text style={styles.zebraTitle}>{lastTag ?? "Ready to Scan"}</Text>
+      <Text style={styles.zebraTitle}>{lastTag ?? t("zebraIdle")}</Text>
       <Text style={styles.zebraSub}>
-        {lastTag ? "Last scanned tag" : "Press the trigger to scan a luggage tag"}
+        {lastTag ? t("lastScannedTag") : t("zebraIdleSub")}
       </Text>
     </View>
   );
@@ -285,17 +289,16 @@ function CameraPermissionView({
   canAsk: boolean;
   onRequest: () => void;
 }) {
+  const { t } = useLocale();
   return (
     <View style={styles.permWrap}>
       <Feather name="camera-off" size={48} color={colors.sgs.textMuted} />
-      <Text style={styles.permTitle}>Camera access needed</Text>
-      <Text style={styles.permSub}>
-        Grant camera permission to scan bag tags on this device.
-      </Text>
+      <Text style={styles.permTitle}>{t("cameraNeeded")}</Text>
+      <Text style={styles.permSub}>{t("cameraGrant")}</Text>
       {canAsk ? (
-        <PrimaryButton label="Allow camera" onPress={onRequest} />
+        <PrimaryButton label={t("allowCamera")} onPress={onRequest} />
       ) : (
-        <Text style={styles.permSub}>Enable camera access in system settings.</Text>
+        <Text style={styles.permSub}>{t("cameraSettings")}</Text>
       )}
     </View>
   );

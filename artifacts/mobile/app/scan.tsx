@@ -22,7 +22,7 @@ import { useLocale } from "@/contexts/LocaleContext";
 import { useScanQueue } from "@/contexts/ScanQueueContext";
 import { useSession } from "@/contexts/SessionContext";
 import { useFlashFeedback } from "@/hooks/useFlashFeedback";
-import { useIsZebraDevice, useZebraScanner } from "@/hooks/useScanner";
+import { useIsZebraDevice, useZebraScanRaw, useZebraScanner } from "@/hooks/useScanner";
 import { decideScan, normalizeTag } from "@/lib/scanLogic";
 import {
   getCachedManifest,
@@ -55,6 +55,15 @@ export default function ScanScreen() {
   const [debugRawScan, setDebugRawScanState] = useState(false);
   const [rawBanner, setRawBanner] = useState<{ data: string; type: string } | null>(null);
   const rawBannerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Track when the most recent Zebra scan event arrived. If the screen
+  // has been focused for >30s on a Zebra device with no scan events at
+  // all, show a soft warning ribbon pointing the agent at Reconfigure
+  // scanner. `null` means the screen has not been focused yet (or has
+  // been blurred), so we suppress the ribbon until the agent is
+  // actively trying to scan.
+  const [zebraFocusedAt, setZebraFocusedAt] = useState<number | null>(null);
+  const [lastZebraScanAt, setLastZebraScanAt] = useState<number | null>(null);
+  const [tickNow, setTickNow] = useState<number>(() => Date.now());
   // Tracks the last tag that produced a red flash (unknown / wrong-group /
   // duplicate). Used as the prefill source when the agent taps "Exception"
   // so the form is seeded with the tag that actually needs an exception
@@ -108,6 +117,42 @@ export default function ScanScreen() {
       if (rawBannerTimer.current) clearTimeout(rawBannerTimer.current);
     };
   }, []);
+
+  // Surface every Zebra trigger pull through the same diagnostic banner
+  // the camera uses, AND track the timestamp so we can warn the agent
+  // when the trigger appears dead. The cleaned-tag handler
+  // (useZebraScanner above) still owns the green/red flash + queueing
+  // logic — this listener is purely observational.
+  useZebraScanRaw(
+    useCallback(
+      (event) => {
+        const now = Date.now();
+        setLastZebraScanAt(now);
+        if (debugRawScan) {
+          setRawBanner({ data: event.data ?? "", type: event.symbology ?? "zebra" });
+          if (rawBannerTimer.current) clearTimeout(rawBannerTimer.current);
+          rawBannerTimer.current = setTimeout(() => setRawBanner(null), 2000);
+        }
+      },
+      [debugRawScan],
+    ),
+  );
+
+  // Mark the focus moment for the trigger-health timer, and run a 1s
+  // tick while focused so the warning ribbon can appear once the
+  // 30s threshold is crossed. The tick stops when the screen blurs
+  // so we don't burn battery on a backgrounded scan screen.
+  useFocusEffect(
+    useCallback(() => {
+      if (!isZebra) return;
+      setZebraFocusedAt(Date.now());
+      const interval = setInterval(() => setTickNow(Date.now()), 1000);
+      return () => {
+        clearInterval(interval);
+        setZebraFocusedAt(null);
+      };
+    }, [isZebra]),
+  );
 
   const handleScan = useCallback(
     async (raw: string) => {
@@ -164,6 +209,17 @@ export default function ScanScreen() {
   );
 
   useZebraScanner(handleScan);
+
+  // Show the "trigger appears dead" ribbon only on Zebra hardware after
+  // the agent has been on the scan screen for at least 30s with zero
+  // scan events received. Once any scan event lands the ribbon hides
+  // permanently for this session — we don't want to nag during slow
+  // belt periods.
+  const showNoScansWarning =
+    isZebra &&
+    lastZebraScanAt === null &&
+    zebraFocusedAt !== null &&
+    tickNow - zebraFocusedAt > 30_000;
 
   const [cameraActive, setCameraActive] = useState(true);
   useFocusEffect(
@@ -237,6 +293,24 @@ export default function ScanScreen() {
               ? `${queue.pendingNoTag} ${t("noTagQueued")}`
               : ""}
           </Text>
+        </View>
+      ) : null}
+
+      {showNoScansWarning ? (
+        <View style={styles.noScanBanner}>
+          <Feather name="alert-triangle" size={16} color={colors.sgs.black} />
+          <View style={styles.noScanText}>
+            <Text style={styles.noScanTitle}>{t("noScansYet")}</Text>
+            <Text style={styles.noScanBody}>{t("noScansYetBody")}</Text>
+          </View>
+          <Pressable
+            onPress={() => router.push("/settings")}
+            style={styles.noScanBtn}
+            accessibilityRole="button"
+            accessibilityLabel={t("openSettingsAction")}
+          >
+            <Text style={styles.noScanBtnTxt}>{t("openSettingsAction")}</Text>
+          </Pressable>
         </View>
       ) : null}
 
@@ -501,6 +575,38 @@ const styles = StyleSheet.create({
     color: colors.sgs.textPrimary,
     fontFamily: FONTS.bodyBold,
     fontSize: 12,
+  },
+  noScanBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: colors.sgs.flashAmber,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  noScanText: { flex: 1 },
+  noScanTitle: {
+    color: colors.sgs.black,
+    fontFamily: FONTS.bodyBold,
+    fontSize: 13,
+  },
+  noScanBody: {
+    color: colors.sgs.black,
+    fontFamily: FONTS.body,
+    fontSize: 11,
+    lineHeight: 15,
+    marginTop: 1,
+  },
+  noScanBtn: {
+    backgroundColor: colors.sgs.black,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 6,
+  },
+  noScanBtnTxt: {
+    color: colors.sgs.textPrimary,
+    fontFamily: FONTS.bodyBold,
+    fontSize: 11,
   },
   opsBanner: {
     flexDirection: "row",

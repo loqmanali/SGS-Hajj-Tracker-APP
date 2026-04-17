@@ -147,8 +147,23 @@ const en = {
   diagnostics: "Diagnostics",
   showRawScan: "Show raw scan",
   showRawScanBody:
-    "Briefly show every barcode the camera detects, even if it's not a valid bag tag. Use this to confirm the scanner is seeing the tag at all.",
+    "Briefly show every barcode the camera or trigger detects, even if it's not a valid bag tag. Use this to confirm the scanner is seeing the tag at all.",
   rawScanBanner: "Raw scan",
+  reconfigureScanner: "Reconfigure scanner",
+  reconfigureScannerBody:
+    "Re-runs the Zebra DataWedge profile setup for this app. Use this if the trigger stops producing scans.",
+  reconfigureScannerCta: "Reconfigure now",
+  reconfigureRunning: "Reconfiguring…",
+  reconfigureOk: "Scanner reconfigured. Pull the trigger to test.",
+  reconfigureNoDataWedge:
+    "DataWedge isn't installed on this device, so there's nothing to reconfigure.",
+  reconfigureFailed: "Couldn't reconfigure the scanner.",
+
+  // Scan screen · trigger health
+  noScansYet: "No scans received yet",
+  noScansYetBody:
+    "If pulling the trigger does nothing, open Settings → Diagnostics and tap Reconfigure scanner.",
+  openSettingsAction: "Open Settings",
 };
 
 const ar: Dict = {
@@ -279,8 +294,22 @@ const ar: Dict = {
   diagnostics: "التشخيص",
   showRawScan: "إظهار المسح الخام",
   showRawScanBody:
-    "إظهار كل باركود تكتشفه الكاميرا حتى لو لم يكن بطاقة حقيبة صالحة. استخدمه للتأكد من أن الماسح يرى البطاقة فعلاً.",
+    "إظهار كل باركود تكتشفه الكاميرا أو الزر حتى لو لم يكن بطاقة حقيبة صالحة. استخدمه للتأكد من أن الماسح يرى البطاقة فعلاً.",
   rawScanBanner: "مسح خام",
+  reconfigureScanner: "إعادة ضبط الماسح",
+  reconfigureScannerBody:
+    "إعادة تشغيل إعداد ملف Zebra DataWedge لهذا التطبيق. استخدمه إذا توقف الزر عن إنتاج مسحات.",
+  reconfigureScannerCta: "إعادة الضبط الآن",
+  reconfigureRunning: "جارٍ إعادة الضبط…",
+  reconfigureOk: "تمت إعادة ضبط الماسح. اضغط الزر للاختبار.",
+  reconfigureNoDataWedge:
+    "DataWedge غير مثبت على هذا الجهاز، لذا لا شيء لإعادة ضبطه.",
+  reconfigureFailed: "تعذّرت إعادة ضبط الماسح.",
+
+  noScansYet: "لم يتم استلام أي مسح بعد",
+  noScansYetBody:
+    "إذا لم يحدث شيء عند ضغط الزر، افتح الإعدادات ← التشخيص واضغط إعادة ضبط الماسح.",
+  openSettingsAction: "فتح الإعدادات",
 };
 
 const dictionaries: Record<Locale, Dict> = { en, ar };

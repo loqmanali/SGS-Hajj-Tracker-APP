@@ -53,9 +53,15 @@ Pulling the trigger should print a line per scan. If nothing prints:
   *Start activity* or *Send via startService*.
 - Force-stop the app and reopen it — auto-configuration runs again on every
   cold launch, which is enough to recover most cases.
-- The native module also exposes `ZebraScanModule.reconfigureProfile()` for a
-  future in-app "Reconfigure scanner" button (see follow-up); if needed today
-  it can be invoked from a debug screen via `NativeModules.ZebraScanModule`.
+- Open **Settings → Diagnostics → Reconfigure scanner** in the app. This
+  re-runs the DataWedge profile setup on demand and shows a green "Scanner
+  reconfigured" line on success or a red error line if DataWedge rejected
+  the request. The button only appears on Zebra hardware where DataWedge is
+  actually installed.
+- If the scan screen has been open for more than 30 seconds on a Zebra
+  device with no scans received, the app shows an amber **"No scans
+  received yet"** ribbon at the top of the scan screen with a shortcut
+  to open Settings — the same recovery path.
 
 ## Supported devices
 

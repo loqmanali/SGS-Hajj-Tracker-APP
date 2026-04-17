@@ -20,9 +20,12 @@
 const fs = require("fs");
 const path = require("path");
 const {
+  withAndroidManifest,
   withDangerousMod,
   withMainApplication,
 } = require("@expo/config-plugins");
+
+const DATAWEDGE_PACKAGE = "com.symbol.datawedge";
 
 const PACKAGE_PATH = "com/semicolon/sgsbagscan/zebra";
 const SOURCE_DIR = path.join(__dirname, "zebra-scan");
@@ -90,8 +93,40 @@ function withZebraScanPackageRegistered(config) {
   });
 }
 
+/**
+ * Android 11+ (API 30) restricts package visibility — without an explicit
+ * <queries> entry the app can't see DataWedge to query it via PackageManager
+ * and (on some OEM builds) targeted broadcasts to com.symbol.datawedge can
+ * also be filtered. Declaring the queries entry is the supported way to
+ * keep both PackageManager and Intent.setPackage(...) working.
+ *
+ * See: https://developer.android.com/training/package-visibility
+ */
+function withZebraDataWedgeQueries(config) {
+  return withAndroidManifest(config, (cfg) => {
+    const manifest = cfg.modResults.manifest;
+    if (!manifest.queries) manifest.queries = [];
+    // Reuse an existing <queries> block if Expo or another plugin already
+    // created one — Android only honors the first.
+    let queries = manifest.queries[0];
+    if (!queries) {
+      queries = {};
+      manifest.queries.push(queries);
+    }
+    if (!Array.isArray(queries.package)) queries.package = [];
+    const already = queries.package.some(
+      (p) => p?.$?.["android:name"] === DATAWEDGE_PACKAGE,
+    );
+    if (!already) {
+      queries.package.push({ $: { "android:name": DATAWEDGE_PACKAGE } });
+    }
+    return cfg;
+  });
+}
+
 module.exports = function withZebraScan(config) {
   config = withZebraScanSources(config);
   config = withZebraScanPackageRegistered(config);
+  config = withZebraDataWedgeQueries(config);
   return config;
 };

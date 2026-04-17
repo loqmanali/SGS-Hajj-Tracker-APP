@@ -20,6 +20,11 @@ import { FONTS } from "@/constants/branding";
 import colors from "@/constants/colors";
 import { useLocale } from "@/contexts/LocaleContext";
 import { useOtaUpdater, type OtaCheckPhase } from "@/hooks/useOtaUpdater";
+import {
+  isDataWedgeAvailable,
+  reconfigureZebraProfile,
+  useIsZebraDevice,
+} from "@/hooks/useScanner";
 import { getDebugRawScan, setDebugRawScan } from "@/lib/db/storage";
 import type { StringKey } from "@/lib/i18n";
 
@@ -42,11 +47,62 @@ export default function SettingsScreen() {
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [rawScanOn, setRawScanOn] = useState(false);
 
+  const isZebra = useIsZebraDevice();
+  // Renders the Reconfigure button only when both the JS-side detector
+  // says we're on Zebra hardware AND the native bridge confirms the
+  // DataWedge package is actually installed. Avoids showing a button
+  // that can't possibly succeed.
+  const [dataWedgePresent, setDataWedgePresent] = useState(false);
+  const [reconfigState, setReconfigState] = useState<{
+    phase: "idle" | "running" | "done" | "error";
+    message?: string;
+  }>({ phase: "idle" });
+  const reconfigTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     return () => {
       if (copyTimer.current) clearTimeout(copyTimer.current);
+      if (reconfigTimer.current) clearTimeout(reconfigTimer.current);
     };
   }, []);
+
+  useEffect(() => {
+    let alive = true;
+    isDataWedgeAvailable().then((present) => {
+      if (alive) setDataWedgePresent(present);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const runReconfigure = useCallback(async () => {
+    setReconfigState({ phase: "running" });
+    const result = await reconfigureZebraProfile();
+    if (reconfigTimer.current) clearTimeout(reconfigTimer.current);
+    if (!result.ok) {
+      setReconfigState({
+        phase: "error",
+        message: `${t("reconfigureFailed")} ${result.error}`.trim(),
+      });
+    } else if (result.dataWedgeMissing) {
+      setReconfigState({
+        phase: "done",
+        message: t("reconfigureNoDataWedge"),
+      });
+    } else {
+      setReconfigState({
+        phase: "done",
+        message: t("reconfigureOk"),
+      });
+    }
+    // Auto-clear the result line after 6s so it doesn't linger on the
+    // settings screen forever.
+    reconfigTimer.current = setTimeout(
+      () => setReconfigState({ phase: "idle" }),
+      6000,
+    );
+  }, [t]);
 
   useEffect(() => {
     let alive = true;
@@ -177,6 +233,60 @@ export default function SettingsScreen() {
               thumbColor={rawScanOn ? colors.sgs.black : colors.sgs.textPrimary}
             />
           </View>
+
+          {isZebra && dataWedgePresent ? (
+            <View style={styles.diagBlock}>
+              <Text style={styles.toggleLabel}>{t("reconfigureScanner")}</Text>
+              <Text style={styles.toggleBody}>
+                {t("reconfigureScannerBody")}
+              </Text>
+              <Pressable
+                onPress={runReconfigure}
+                disabled={reconfigState.phase === "running"}
+                accessibilityRole="button"
+                accessibilityLabel={t("reconfigureScannerCta")}
+                style={({ pressed }) => [
+                  styles.diagBtn,
+                  {
+                    opacity:
+                      reconfigState.phase === "running"
+                        ? 0.7
+                        : pressed
+                          ? 0.85
+                          : 1,
+                  },
+                ]}
+              >
+                <View style={styles.btnRow}>
+                  {reconfigState.phase === "running" ? (
+                    <ActivityIndicator color={colors.sgs.textPrimary} />
+                  ) : (
+                    <Feather
+                      name="zap"
+                      size={16}
+                      color={colors.sgs.textPrimary}
+                    />
+                  )}
+                  <Text style={styles.diagBtnTxt}>
+                    {reconfigState.phase === "running"
+                      ? t("reconfigureRunning")
+                      : t("reconfigureScannerCta")}
+                  </Text>
+                </View>
+              </Pressable>
+              {reconfigState.message ? (
+                <Text
+                  style={
+                    reconfigState.phase === "error"
+                      ? styles.diagError
+                      : styles.diagOk
+                  }
+                >
+                  {reconfigState.message}
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
         </View>
       </ScrollView>
     </View>
@@ -430,5 +540,39 @@ const styles = StyleSheet.create({
     color: colors.sgs.textMuted,
     lineHeight: 17,
     marginTop: 2,
+  },
+  diagBlock: {
+    marginTop: 14,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: colors.sgs.border,
+    gap: 8,
+  },
+  diagBtn: {
+    height: 44,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.sgs.borderStrong,
+    backgroundColor: colors.sgs.surfaceElevated,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+    marginTop: 4,
+  },
+  diagBtnTxt: {
+    fontFamily: FONTS.bodyBold,
+    fontSize: 14,
+    color: colors.sgs.textPrimary,
+    letterSpacing: 0.2,
+  },
+  diagOk: {
+    fontFamily: FONTS.bodyMedium,
+    fontSize: 12,
+    color: colors.sgs.green,
+  },
+  diagError: {
+    fontFamily: FONTS.bodyMedium,
+    fontSize: 12,
+    color: colors.sgs.flashRed,
   },
 });

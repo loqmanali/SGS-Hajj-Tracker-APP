@@ -77,6 +77,10 @@ const en = {
   noTagQueuedBody:
     "Local tag issued. Affix it to the bag now — the bag will sync to the server when the network is back.",
   pendingOps: "Pending updates",
+  pendingExceptions: "Pending exceptions",
+  pendingNoTag: "Pending no-tag",
+  exceptionsQueued: "exception(s) queued",
+  noTagQueued: "no-tag queued",
 
   // Shift summary
   shiftSummary: "Shift Summary",
@@ -202,6 +206,10 @@ const ar: Dict = {
   noTagQueuedBody:
     "تم إصدار بطاقة محلية. ألصقها على الحقيبة الآن — سيتم رفعها عند عودة الشبكة.",
   pendingOps: "تحديثات معلقة",
+  pendingExceptions: "استثناءات معلقة",
+  pendingNoTag: "بدون بطاقة معلق",
+  exceptionsQueued: "استثناء معلق",
+  noTagQueued: "بدون بطاقة معلق",
 
   shiftSummary: "ملخص الوردية",
   totals: "الإجماليات",

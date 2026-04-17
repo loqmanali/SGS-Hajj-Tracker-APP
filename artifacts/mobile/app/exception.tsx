@@ -54,21 +54,24 @@ export default function ExceptionScreen() {
     }
     setBusy(true);
     try {
-      // Always go through the queue. When online the queue drains
-      // immediately; when offline the entry persists with retry/backoff
-      // so the agent never has to remember the tag and re-enter it once
-      // connectivity returns.
-      await queue.enqueueException({
+      // Always go through the queue. The queue persists first (durability),
+      // then attempts the API call inline when online and resolves with a
+      // drain-confirmed status — so we only show "Logged" if the server
+      // really accepted it. On failure (timeout, 5xx, offline), the entry
+      // remains queued with retry/backoff and we tell the agent it's
+      // saved locally and will sync.
+      const result = await queue.enqueueException({
         tagNumber: tag.trim(),
         groupId: session.session!.group.id,
         flightId: session.session!.flight.id,
         reason,
         notes: notes.trim() || undefined,
       });
-      const offline = !queue.online;
       Alert.alert(
-        offline ? t("queuedOffline") : t("logged"),
-        offline ? t("exceptionQueuedBody") : t("exceptionLoggedBody"),
+        result.status === "submitted" ? t("logged") : t("queuedOffline"),
+        result.status === "submitted"
+          ? t("exceptionLoggedBody")
+          : t("exceptionQueuedBody"),
         [{ text: "OK", onPress: () => router.back() }],
       );
     } catch (err) {

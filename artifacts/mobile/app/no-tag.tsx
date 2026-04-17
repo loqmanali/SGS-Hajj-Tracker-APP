@@ -43,11 +43,13 @@ export default function NoTagScreen() {
     }
     setBusy(true);
     try {
-      // Always queue. The queue immediately mints a local placeholder tag
-      // (NOTAG-<station>-LOCAL-<6char>) the agent can affix to the bag
-      // right now; when the entry drains, the placeholder is swapped for
-      // the backend-issued tag in the local scanned set.
-      const { placeholderTag } = await queue.enqueueNoTag({
+      // The queue mints a local placeholder tag immediately so the agent
+      // can affix something to the bag now. When online, it then attempts
+      // the API call inline and (on success) returns the backend-issued
+      // `finalTag` — the swap from placeholder→real tag has already been
+      // applied to the local scanned set and cached manifest by the time
+      // we get here, so the displayed tag is the canonical one.
+      const result = await queue.enqueueNoTag({
         pilgrimName: pilgrimName.trim(),
         description: description.trim(),
         groupId: session.session!.group.id,
@@ -57,10 +59,11 @@ export default function NoTagScreen() {
         // an unknown station segment.
         stationCode: auth.user?.stationCode,
       });
-      const offline = !queue.online;
+      const tagToShow =
+        result.status === "submitted" ? result.finalTag : result.placeholderTag;
       Alert.alert(
-        offline ? t("queuedOffline") : t("tagGenerated"),
-        `${offline ? t("noTagQueuedBody") : t("noTagGeneratedBody")}\n\n${placeholderTag}`,
+        result.status === "submitted" ? t("tagGenerated") : t("queuedOffline"),
+        `${result.status === "submitted" ? t("noTagGeneratedBody") : t("noTagQueuedBody")}\n\n${tagToShow}`,
         [{ text: "OK", onPress: () => router.back() }],
       );
     } catch (err) {

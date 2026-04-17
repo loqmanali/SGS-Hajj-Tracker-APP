@@ -14,8 +14,13 @@ const KEYS = {
   scanned: (groupId: string) => `sgs:scanned:${groupId}`,
   queue: "sgs:scanQueue",
   deadLetter: "sgs:scanDeadLetter",
-  opsQueue: "sgs:opsQueue",
-  opsDeadLetter: "sgs:opsDeadLetter",
+  // Two parallel ops queues — per-kind so parallel drains can't race on
+  // shared storage, and per-kind counts / dead-letter buckets are
+  // trivially derivable for the UI.
+  opQueueException: "sgs:opsExceptionQueue",
+  opDeadLetterException: "sgs:opsExceptionDeadLetter",
+  opQueueNoTag: "sgs:opsNoTagQueue",
+  opDeadLetterNoTag: "sgs:opsNoTagDeadLetter",
   lastSync: (groupId: string) => `sgs:lastSync:${groupId}`,
   flightsCache: "sgs:flightsCache",
   flightsCacheAt: "sgs:flightsCacheAt",
@@ -260,12 +265,22 @@ function makeLocalId(): string {
   return Date.now().toString() + Math.random().toString(36).slice(2, 8);
 }
 
+function queueKeyFor(kind: OpKind): string {
+  return kind === "exception" ? KEYS.opQueueException : KEYS.opQueueNoTag;
+}
+
+function deadLetterKeyFor(kind: OpKind): string {
+  return kind === "exception"
+    ? KEYS.opDeadLetterException
+    : KEYS.opDeadLetterNoTag;
+}
+
 export async function enqueueOp(
   op:
     | { kind: "exception"; payload: ExceptionOpPayload }
     | { kind: "noTag"; payload: NoTagOpPayload },
 ): Promise<QueuedOp> {
-  const queue = await getOpQueue();
+  const queue = await getOpQueue(op.kind);
   const item = {
     localId: makeLocalId(),
     kind: op.kind,
@@ -274,33 +289,41 @@ export async function enqueueOp(
     payload: op.payload,
   } as QueuedOp;
   queue.push(item);
-  await AsyncStorage.setItem(KEYS.opsQueue, JSON.stringify(queue));
+  await AsyncStorage.setItem(queueKeyFor(op.kind), JSON.stringify(queue));
   return item;
 }
 
-export async function getOpQueue(): Promise<QueuedOp[]> {
-  const raw = await AsyncStorage.getItem(KEYS.opsQueue);
+export async function getOpQueue(kind: OpKind): Promise<QueuedOp[]> {
+  const raw = await AsyncStorage.getItem(queueKeyFor(kind));
   return raw ? (JSON.parse(raw) as QueuedOp[]) : [];
 }
 
-export async function setOpQueue(queue: QueuedOp[]) {
-  await AsyncStorage.setItem(KEYS.opsQueue, JSON.stringify(queue));
+export async function setOpQueue(kind: OpKind, queue: QueuedOp[]) {
+  await AsyncStorage.setItem(queueKeyFor(kind), JSON.stringify(queue));
 }
 
 export async function moveOpToDeadLetter(item: QueuedOp) {
-  const raw = await AsyncStorage.getItem(KEYS.opsDeadLetter);
+  const key = deadLetterKeyFor(item.kind);
+  const raw = await AsyncStorage.getItem(key);
   const dl = raw ? (JSON.parse(raw) as QueuedOp[]) : [];
   dl.push(item);
-  await AsyncStorage.setItem(KEYS.opsDeadLetter, JSON.stringify(dl));
+  await AsyncStorage.setItem(key, JSON.stringify(dl));
 }
 
-export async function getOpDeadLetter(): Promise<QueuedOp[]> {
-  const raw = await AsyncStorage.getItem(KEYS.opsDeadLetter);
+export async function getOpDeadLetter(kind: OpKind): Promise<QueuedOp[]> {
+  const raw = await AsyncStorage.getItem(deadLetterKeyFor(kind));
   return raw ? (JSON.parse(raw) as QueuedOp[]) : [];
 }
 
-export async function clearOpDeadLetter() {
-  await AsyncStorage.removeItem(KEYS.opsDeadLetter);
+export async function clearOpDeadLetter(kind?: OpKind) {
+  if (kind) {
+    await AsyncStorage.removeItem(deadLetterKeyFor(kind));
+  } else {
+    await AsyncStorage.multiRemove([
+      KEYS.opDeadLetterException,
+      KEYS.opDeadLetterNoTag,
+    ]);
+  }
 }
 
 /**
@@ -333,6 +356,38 @@ export async function replaceScannedTag(
     KEYS.scanned(groupId),
     JSON.stringify(Array.from(set)),
   );
+}
+
+/**
+ * Swap a tag in the cached manifest for a group. The manifest is the
+ * source-of-truth bag list shown to the agent; if a no-tag op was logged
+ * offline and we wrote the placeholder anywhere in it, point those
+ * entries at the backend-issued tag once sync succeeds. Best-effort —
+ * the next manifest fetch will reconcile authoritatively.
+ */
+export async function replaceManifestTag(
+  groupId: string,
+  oldTag: string,
+  newTag: string,
+) {
+  const raw = await AsyncStorage.getItem(KEYS.manifest(groupId));
+  if (!raw) return;
+  try {
+    const manifest = JSON.parse(raw) as ManifestBag[];
+    let touched = false;
+    for (const bag of manifest) {
+      if (bag.tagNumber === oldTag) {
+        bag.tagNumber = newTag;
+        touched = true;
+      }
+    }
+    if (touched) {
+      await AsyncStorage.setItem(KEYS.manifest(groupId), JSON.stringify(manifest));
+    }
+  } catch {
+    // Malformed cache — leave it alone; the next manifest fetch will
+    // overwrite with fresh server data.
+  }
 }
 
 export async function clearAll() {

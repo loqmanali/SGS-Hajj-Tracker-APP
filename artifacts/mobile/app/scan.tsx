@@ -193,6 +193,25 @@ export default function ScanScreen() {
         </View>
       ) : null}
 
+      {queue.pendingExceptions > 0 || queue.pendingNoTag > 0 ? (
+        // Surface a breakdown of pending non-scan work so the agent can
+        // see at a glance whether their exceptions / no-tag entries are
+        // still waiting for the network. The status pill in the header
+        // already reflects scan-queue depth.
+        <View style={styles.opsBanner}>
+          <Feather name="upload-cloud" size={14} color={colors.sgs.textMuted} />
+          <Text style={styles.opsBannerText}>
+            {queue.pendingExceptions > 0
+              ? `${queue.pendingExceptions} ${t("exceptionsQueued")}`
+              : ""}
+            {queue.pendingExceptions > 0 && queue.pendingNoTag > 0 ? " · " : ""}
+            {queue.pendingNoTag > 0
+              ? `${queue.pendingNoTag} ${t("noTagQueued")}`
+              : ""}
+          </Text>
+        </View>
+      ) : null}
+
       <View style={styles.body}>
         {isZebra ? (
           <ZebraIdleView
@@ -420,6 +439,22 @@ const styles = StyleSheet.create({
   dlBtnTxt: {
     color: colors.sgs.textPrimary,
     fontFamily: FONTS.bodyBold,
+    fontSize: 12,
+  },
+  opsBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: colors.sgs.surface,
+    borderBottomColor: colors.sgs.border,
+    borderBottomWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  opsBannerText: {
+    flex: 1,
+    color: colors.sgs.textMuted,
+    fontFamily: FONTS.bodyMedium,
     fontSize: 12,
   },
   reticle: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center" },

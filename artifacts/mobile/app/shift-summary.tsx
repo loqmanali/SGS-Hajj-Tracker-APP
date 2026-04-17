@@ -202,9 +202,14 @@ export default function ShiftSummaryScreen() {
           <Stat label={t("duration")} value={`${durationMin}m`} />
           <Stat label={t("pendingScans")} value={queue.queueSize} />
           <Stat
-            label={t("pendingOps")}
-            value={queue.opsQueueSize}
-            accent={queue.opsQueueSize > 0 ? "amber" : undefined}
+            label={t("pendingExceptions")}
+            value={queue.pendingExceptions}
+            accent={queue.pendingExceptions > 0 ? "amber" : undefined}
+          />
+          <Stat
+            label={t("pendingNoTag")}
+            value={queue.pendingNoTag}
+            accent={queue.pendingNoTag > 0 ? "amber" : undefined}
           />
         </View>
 
@@ -229,14 +234,18 @@ export default function ShiftSummaryScreen() {
             ) : null}
           </View>
           <Text style={styles.syncDim}>
-            {t("pendingScans")}: {queue.queueSize}
-            {queue.opsQueueSize > 0
-              ? ` · ${t("pendingOps")}: ${queue.opsQueueSize}`
-              : ""}
-            {queue.deadLetterTotal > 0
-              ? ` · ${t("failedScans")}: ${queue.deadLetterTotal}`
-              : ""}
+            {t("pendingScans")}: {queue.queueSize} ·{" "}
+            {t("pendingExceptions")}: {queue.pendingExceptions} ·{" "}
+            {t("pendingNoTag")}: {queue.pendingNoTag}
           </Text>
+          {queue.deadLetterTotal > 0 ? (
+            <Text style={styles.syncDim}>
+              {t("failedScans")}: {queue.deadLetterTotal}
+              {queue.failedExceptions > 0 || queue.failedNoTag > 0
+                ? ` (${queue.failedExceptions} ${t("exceptions")}, ${queue.failedNoTag} ${t("noTag")})`
+                : ""}
+            </Text>
+          ) : null}
           {auth.lastSyncAt ? (
             <Text style={styles.syncDim}>
               {t("lastSync")}: {new Date(auth.lastSyncAt).toLocaleTimeString()}

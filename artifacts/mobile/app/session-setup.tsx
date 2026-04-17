@@ -46,6 +46,16 @@ export default function SessionSetupScreen() {
   const [flightsCacheAt, setFlightsCacheAt] = useState<string | null>(null);
   const [groupsCacheAt, setGroupsCacheAt] = useState<string | null>(null);
 
+  // Per-flight assignments are a concept that only applies to roles whose
+  // duty roster pins them to specific flights (e.g. belt agents working a
+  // single inbound). Airport ops agents work the whole airport and the
+  // backend (verified live 2026-04-17 with user `yassin`) returns 403 on
+  // /api/flights/assignments-all for that role. Skipping the call avoids
+  // the silent 403 and correctly hides the "assigned" affordance for roles
+  // where it doesn't apply.
+  const role = auth.user?.role ?? "";
+  const supportsAssignments = role !== "airport_ops";
+
   const [flightsQ, assignmentsQ] = useQueries({
     queries: [
       {
@@ -69,7 +79,7 @@ export default function SessionSetupScreen() {
         },
       },
       {
-        queryKey: ["assignments"],
+        queryKey: ["assignments", role],
         queryFn: async () => {
           try {
             const fresh = await sgsApi.flightAssignments();
@@ -80,6 +90,7 @@ export default function SessionSetupScreen() {
             return cached ?? { flightIds: [] };
           }
         },
+        enabled: supportsAssignments,
         retry: 0,
       },
     ],

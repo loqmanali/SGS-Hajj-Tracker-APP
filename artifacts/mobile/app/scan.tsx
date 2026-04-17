@@ -26,6 +26,7 @@ import { useIsZebraDevice, useZebraScanner } from "@/hooks/useScanner";
 import { decideScan, normalizeTag } from "@/lib/scanLogic";
 import {
   getCachedManifest,
+  getDebugRawScan,
   getOrCreateDeviceId,
   getScannedTags,
   markTagScanned,
@@ -48,6 +49,12 @@ export default function ScanScreen() {
   const [scannedCount, setScannedCount] = useState(0);
   const [expected, setExpected] = useState(0);
   const [lastTag, setLastTag] = useState<string | null>(null);
+  // "Show raw scan" diagnostic banner — opt-in from Settings. Holds the
+  // most recent raw barcode payload + symbology so the agent can confirm
+  // the camera is actually seeing tags. Auto-clears after ~2s.
+  const [debugRawScan, setDebugRawScanState] = useState(false);
+  const [rawBanner, setRawBanner] = useState<{ data: string; type: string } | null>(null);
+  const rawBannerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Tracks the last tag that produced a red flash (unknown / wrong-group /
   // duplicate). Used as the prefill source when the agent taps "Exception"
   // so the form is seeded with the tag that actually needs an exception
@@ -80,6 +87,27 @@ export default function ScanScreen() {
       requestPermission();
     }
   }, [isZebra, permission, requestPermission]);
+
+  // Re-read the diagnostic toggle every time the scan screen is focused
+  // so flipping it in Settings takes effect on the next return without
+  // needing to remount the app.
+  useFocusEffect(
+    useCallback(() => {
+      let alive = true;
+      getDebugRawScan().then((on) => {
+        if (alive) setDebugRawScanState(on);
+      });
+      return () => {
+        alive = false;
+      };
+    }, []),
+  );
+
+  useEffect(() => {
+    return () => {
+      if (rawBannerTimer.current) clearTimeout(rawBannerTimer.current);
+    };
+  }, []);
 
   const handleScan = useCallback(
     async (raw: string) => {
@@ -224,11 +252,26 @@ export default function ScanScreen() {
             <CameraView
               style={StyleSheet.absoluteFill}
               barcodeScannerSettings={{
-                // Spec: bag tags are CODE_128 only — restrict to avoid
-                // false positives from other symbologies in baggage areas.
-                barcodeTypes: ["code128"],
+                // Bag-tag symbology set:
+                //   - code128 / GS1-128: SGS-printed Hajj tags
+                //   - itf14: IATA Resolution 740 airline bag tags
+                //     (Saudia, Emirates, BA, etc. — the long ITF
+                //     license plate)
+                //   - code39, pdf417: defensive — appear on some
+                //     airline tags and SGS staff badges, no false-
+                //     positive cost in baggage halls.
+                // QR / EAN / UPC are intentionally OFF so food-
+                // packaging barcodes don't trigger spurious scans.
+                barcodeTypes: ["code128", "itf14", "code39", "pdf417"],
               }}
-              onBarcodeScanned={(r) => handleScan(r.data)}
+              onBarcodeScanned={(r) => {
+                if (debugRawScan) {
+                  setRawBanner({ data: r.data, type: r.type });
+                  if (rawBannerTimer.current) clearTimeout(rawBannerTimer.current);
+                  rawBannerTimer.current = setTimeout(() => setRawBanner(null), 2000);
+                }
+                handleScan(r.data);
+              }}
             />
           ) : null
         ) : (
@@ -251,6 +294,17 @@ export default function ScanScreen() {
             title={flash.title}
             subtitle={flash.subtitle}
           />
+        ) : null}
+
+        {debugRawScan && rawBanner ? (
+          <View pointerEvents="none" style={styles.rawBanner}>
+            <Text style={styles.rawBannerLabel}>
+              {t("rawScanBanner")} · {rawBanner.type}
+            </Text>
+            <Text style={styles.rawBannerValue} numberOfLines={1}>
+              {rawBanner.data || "(empty)"}
+            </Text>
+          </View>
         ) : null}
       </View>
 
@@ -466,11 +520,40 @@ const styles = StyleSheet.create({
   },
   reticle: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center" },
   reticleBox: {
-    width: "85%",
-    height: 110,
+    // Square reticle so both vertically held airline (IATA) tags and
+    // horizontally held SGS-printed tags frame naturally without the
+    // agent having to rotate the bag.
+    width: "70%",
+    aspectRatio: 1,
+    maxHeight: "60%",
     borderColor: colors.sgs.green,
     borderWidth: 3,
     borderRadius: 14,
+  },
+  rawBanner: {
+    position: "absolute",
+    top: 12,
+    left: 12,
+    right: 12,
+    backgroundColor: "rgba(0,0,0,0.78)",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderColor: colors.sgs.green,
+    borderWidth: 1,
+  },
+  rawBannerLabel: {
+    color: colors.sgs.green,
+    fontFamily: FONTS.bodyBold,
+    fontSize: 11,
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+  },
+  rawBannerValue: {
+    color: "#FFF",
+    fontFamily: FONTS.body,
+    fontSize: 14,
+    marginTop: 2,
   },
   reticleHint: {
     position: "absolute",

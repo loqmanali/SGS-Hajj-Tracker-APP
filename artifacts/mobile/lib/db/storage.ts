@@ -28,6 +28,11 @@ const KEYS = {
   groupsCache: (flightId: string) => `sgs:groupsCache:${flightId}`,
   groupsCacheAt: (flightId: string) => `sgs:groupsCacheAt:${flightId}`,
   deviceId: "sgs:deviceId",
+  // Diagnostic toggle — when on, the scan screen surfaces every raw
+  // barcode payload it receives (including those rejected by the
+  // validator) so the next "scan shows nothing" report is one tap
+  // away from a useful repro.
+  debugRawScan: "sgs:debug:rawScan",
 };
 
 export const STORAGE_KEYS = KEYS;
@@ -76,6 +81,32 @@ function generateUuidV4(): string {
     else out += hex[(Math.random() * 16) | 0];
   }
   return out;
+}
+
+// ---------- Diagnostic settings ----------
+
+/**
+ * "Show raw scan" diagnostic toggle. When on, the scan screen briefly
+ * surfaces every detected barcode (including ones rejected by the
+ * validator) with its raw payload so a field issue like "scan shows
+ * nothing" can be triaged in seconds. Default off so the production
+ * UX stays clean.
+ */
+export async function getDebugRawScan(): Promise<boolean> {
+  try {
+    const v = await AsyncStorage.getItem(KEYS.debugRawScan);
+    return v === "1";
+  } catch {
+    return false;
+  }
+}
+
+export async function setDebugRawScan(on: boolean): Promise<void> {
+  try {
+    await AsyncStorage.setItem(KEYS.debugRawScan, on ? "1" : "0");
+  } catch {
+    // best-effort — not worth crashing the settings screen for
+  }
 }
 
 // ---------- Flights / groups offline cache ----------

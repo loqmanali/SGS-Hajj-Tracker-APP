@@ -9,6 +9,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   View,
 } from "react-native";
@@ -19,6 +20,7 @@ import { FONTS } from "@/constants/branding";
 import colors from "@/constants/colors";
 import { useLocale } from "@/contexts/LocaleContext";
 import { useOtaUpdater, type OtaCheckPhase } from "@/hooks/useOtaUpdater";
+import { getDebugRawScan, setDebugRawScan } from "@/lib/db/storage";
 import type { StringKey } from "@/lib/i18n";
 
 type T = (k: StringKey) => string;
@@ -38,12 +40,33 @@ export default function SettingsScreen() {
 
   const [copied, setCopied] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [rawScanOn, setRawScanOn] = useState(false);
 
   useEffect(() => {
     return () => {
       if (copyTimer.current) clearTimeout(copyTimer.current);
     };
   }, []);
+
+  useEffect(() => {
+    let alive = true;
+    getDebugRawScan().then((on) => {
+      if (alive) setRawScanOn(on);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const toggleRawScan = useCallback(
+    (next: boolean) => {
+      // Optimistic local update so the switch never feels laggy; the
+      // AsyncStorage write is fire-and-forget and non-blocking.
+      setRawScanOn(next);
+      void setDebugRawScan(next);
+    },
+    [],
+  );
 
   // Read OTA fields directly off the Updates module so the values reflect
   // whatever bundle is actually executing right now (not what was bundled
@@ -137,6 +160,24 @@ export default function SettingsScreen() {
           Share this with the SGS BagScan team when reporting an issue so they
           can confirm exactly which build your device is on.
         </Text>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>{t("diagnostics")}</Text>
+          <View style={styles.toggleRow}>
+            <View style={styles.toggleText}>
+              <Text style={styles.toggleLabel}>{t("showRawScan")}</Text>
+              <Text style={styles.toggleBody}>{t("showRawScanBody")}</Text>
+            </View>
+            <Switch
+              value={rawScanOn}
+              onValueChange={toggleRawScan}
+              accessibilityRole="switch"
+              accessibilityLabel={t("showRawScan")}
+              trackColor={{ false: colors.sgs.borderStrong, true: colors.sgs.green }}
+              thumbColor={rawScanOn ? colors.sgs.black : colors.sgs.textPrimary}
+            />
+          </View>
+        </View>
       </ScrollView>
     </View>
   );
@@ -370,5 +411,24 @@ const styles = StyleSheet.create({
     color: colors.sgs.textMuted,
     lineHeight: 18,
     paddingHorizontal: 4,
+  },
+  toggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginTop: 4,
+  },
+  toggleText: { flex: 1 },
+  toggleLabel: {
+    fontFamily: FONTS.bodyBold,
+    fontSize: 14,
+    color: colors.sgs.textPrimary,
+  },
+  toggleBody: {
+    fontFamily: FONTS.body,
+    fontSize: 12,
+    color: colors.sgs.textMuted,
+    lineHeight: 17,
+    marginTop: 2,
   },
 });

@@ -19,8 +19,16 @@ recovery below.
 4. Pick `com.semicolon.sgsbagscan`, then `*` (all activities).
 5. Back in the profile, set:
    - **Profile enabled**: ON
-   - **Barcode input**: ON, scanner = *Auto*, default symbologies are fine
-     (Code 128 + GS1-128 cover SGS Hajj tags).
+   - **Barcode input**: ON, scanner = *Auto*. Required symbologies:
+     - **Code 128** + **GS1-128** — SGS-printed Hajj bag tags
+     - **Interleaved 2 of 5 (I 2/5)** — IATA airline bag tags
+       (Resolution 740 license plate, e.g. Saudia `0065SV456953`)
+     - **Code 39** and **PDF417** are safe to leave on as defensive
+       defaults; they appear on some airline tags and SGS staff
+       badges.
+     All four are enabled by default on stock Zebra DataWedge profiles
+     — only call this out manually if a previous deployment trimmed
+     them down.
    - **Keystroke output**: OFF
    - **Intent output**: ON
      - Intent action: `com.semicolon.sgsbagscan.SCAN`

@@ -58,7 +58,7 @@ const en = {
   zebraIdle: "Ready to Scan",
   zebraIdleSub: "Press the trigger to scan a luggage tag",
   lastScannedTag: "Last scanned tag",
-  alignTag: "Align bag tag inside the frame",
+  alignTag: "Center the barcode in the frame",
   cameraNeeded: "Camera access needed",
   cameraGrant: "Grant camera permission to scan bag tags on this device.",
   allowCamera: "Allow camera",
@@ -142,6 +142,13 @@ const en = {
   updateReady: "Update downloaded — tap to apply.",
   applyUpdateNow: "Apply update now",
   applying: "Applying…",
+
+  // Settings · Diagnostics
+  diagnostics: "Diagnostics",
+  showRawScan: "Show raw scan",
+  showRawScanBody:
+    "Briefly show every barcode the camera detects, even if it's not a valid bag tag. Use this to confirm the scanner is seeing the tag at all.",
+  rawScanBanner: "Raw scan",
 };
 
 const ar: Dict = {
@@ -188,7 +195,7 @@ const ar: Dict = {
   zebraIdle: "جاهز للمسح",
   zebraIdleSub: "اضغط الزر لمسح بطاقة الحقيبة",
   lastScannedTag: "آخر بطاقة ممسوحة",
-  alignTag: "ضع بطاقة الحقيبة داخل الإطار",
+  alignTag: "ضع الباركود في وسط الإطار",
   cameraNeeded: "مطلوب صلاحية الكاميرا",
   cameraGrant: "امنح الكاميرا الإذن لمسح البطاقات.",
   allowCamera: "السماح للكاميرا",
@@ -268,6 +275,12 @@ const ar: Dict = {
   updateReady: "تم تنزيل التحديث — اضغط للتطبيق.",
   applyUpdateNow: "تطبيق التحديث الآن",
   applying: "جارٍ التطبيق…",
+
+  diagnostics: "التشخيص",
+  showRawScan: "إظهار المسح الخام",
+  showRawScanBody:
+    "إظهار كل باركود تكتشفه الكاميرا حتى لو لم يكن بطاقة حقيبة صالحة. استخدمه للتأكد من أن الماسح يرى البطاقة فعلاً.",
+  rawScanBanner: "مسح خام",
 };
 
 const dictionaries: Record<Locale, Dict> = { en, ar };

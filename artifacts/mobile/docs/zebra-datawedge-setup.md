@@ -63,6 +63,31 @@ Pulling the trigger should print a line per scan. If nothing prints:
   received yet"** ribbon at the top of the scan screen with a shortcut
   to open Settings — the same recovery path.
 
+## On-device validation status
+
+The Task #25 hardening (auto-create + auto-config of the `SGSBagScan` profile,
+the **Reconfigure scanner** button, and the "No scans received yet" ribbon)
+has been validated by typecheck and code review only. As of this writing, **no
+on-device confirmation has been performed against a real TC57HO/TC72** with a
+factory-reset DataWedge — the validating environment had no physical Zebra
+hardware available.
+
+Before relying on the auto-config path in the field, an operator with a
+handheld should:
+
+1. Install the latest dev-client APK on a device whose DataWedge has been
+   factory-reset (or is freshly enrolled).
+2. Cold-launch the app and confirm DataWedge → Profiles now lists
+   `SGSBagScan` bound to `com.semicolon.sgsbagscan`.
+3. Capture `adb logcat ZebraScanModule:V *:S` and confirm both
+   `DataWedge result: cmd=auto-init-create result=SUCCESS` and
+   `…auto-init-config result=SUCCESS` appear.
+4. Pull the trigger and confirm the count increments with a green/red flash.
+5. Open **Settings → Diagnostics → Reconfigure scanner** and confirm the
+   green "Scanner reconfigured" toast.
+
+Record the result back in this section once it has been done.
+
 ## Supported devices
 
 The JS detector in `hooks/useScanner.ts` whitelists TC57HO, TC72, TC77 and

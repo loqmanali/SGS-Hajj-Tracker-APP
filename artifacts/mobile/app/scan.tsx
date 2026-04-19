@@ -142,10 +142,17 @@ export default function ScanScreen() {
   // tick while focused so the warning ribbon can appear once the
   // 30s threshold is crossed. The tick stops when the screen blurs
   // so we don't burn battery on a backgrounded scan screen.
+  // Resets `lastZebraScanAt` on every focus so each visit to this
+  // screen gets its own 30-second observation window — otherwise a
+  // single scan from a prior session would suppress the trigger-health
+  // warning forever, even after the agent navigates away and comes
+  // back to a scanner that has since stopped firing.
   useFocusEffect(
     useCallback(() => {
       if (!isZebra) return;
       setZebraFocusedAt(Date.now());
+      setLastZebraScanAt(null);
+      setTickNow(Date.now());
       const interval = setInterval(() => setTickNow(Date.now()), 1000);
       return () => {
         clearInterval(interval);

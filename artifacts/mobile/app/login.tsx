@@ -24,7 +24,7 @@ import { APP_NAME, FONTS, ORG } from "@/constants/branding";
 import colors from "@/constants/colors";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLocale } from "@/contexts/LocaleContext";
-import { SGS_BASE_URL } from "@/lib/api/sgs";
+import { ApiError, SGS_BASE_URL, checkReachability } from "@/lib/api/sgs";
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -47,6 +47,8 @@ export default function LoginScreen() {
   const [busy, setBusy] = useState(false);
   const [bioAvailable, setBioAvailable] = useState(false);
   const [bioEnabled, setBioEnabled] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [checkResult, setCheckResult] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -59,6 +61,9 @@ export default function LoginScreen() {
     })();
   }, []);
 
+  const fmt = (template: string, vars: Record<string, string | number>) =>
+    template.replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? ""));
+
   const onSubmit = async () => {
     if (!username.trim() || !password) {
       setError(t("enterCredentials"));
@@ -66,6 +71,7 @@ export default function LoginScreen() {
     }
     setBusy(true);
     setError(null);
+    setCheckResult(null);
     try {
       await auth.signIn(username.trim(), password);
       // Persist biometric preference selected on this screen so the next
@@ -73,20 +79,57 @@ export default function LoginScreen() {
       await setBiometricEnabled(bioEnabled && bioAvailable);
       router.replace("/session-setup");
     } catch (err) {
-      const e = err as Error & { message?: string };
-      const msg = e?.message || "";
-      // Network failure → user is offline; show explicit copy per spec.
-      if (
-        /network/i.test(msg) ||
-        /failed to fetch/i.test(msg) ||
-        /typeerror/i.test(msg)
-      ) {
-        setError(t("offlineLogin"));
+      // The login screen used to map every TypeError ("Network request
+      // failed") to "offlineLogin", which hid 401/429/5xx behind the
+      // wrong copy. Now we distinguish four buckets so operators (and
+      // support) can see the actual reason.
+      if (err instanceof ApiError) {
+        if (err.status === 401 || err.status === 403) {
+          setError(t("loginInvalidCreds"));
+        } else if (err.status === 429) {
+          const retry =
+            (err as ApiError & { retryAfter?: number }).retryAfter ?? 60;
+          setError(fmt(t("loginRateLimited"), { n: retry }));
+        } else if (err.status >= 500) {
+          setError(fmt(t("loginServerError"), { code: err.status }));
+        } else {
+          setError(err.message || t("loginFailed"));
+        }
+      } else if (err instanceof TypeError) {
+        // Transport-layer failure: DNS, TLS, connection reset, carrier
+        // APN whitelist block. React Native fetch raises a generic
+        // "Network request failed" TypeError for all of these — surface
+        // the actual host so the operator knows what to whitelist or
+        // which Wi-Fi to switch to.
+        setError(fmt(t("loginUnreachable"), { host: apiHost }));
       } else {
+        // Unknown internal error — don't mislabel it as a reachability
+        // problem. Surface the raw message if any, else the generic
+        // "Login failed" copy.
+        const msg = (err as Error)?.message;
         setError(msg || t("loginFailed"));
       }
     } finally {
       setBusy(false);
+    }
+  };
+
+  const onTestConnection = async () => {
+    setChecking(true);
+    setCheckResult(null);
+    setError(null);
+    try {
+      const r = await checkReachability();
+      if (r.ok) {
+        setCheckResult(fmt(t("loginCheckOk"), { ms: r.ms }));
+      } else {
+        const reason = r.status
+          ? `HTTP ${r.status}`
+          : r.error || "network error";
+        setCheckResult(fmt(t("loginCheckBad"), { reason }));
+      }
+    } finally {
+      setChecking(false);
     }
   };
 
@@ -160,7 +203,16 @@ export default function LoginScreen() {
             </View>
           ) : null}
           {error ? <Text style={styles.errorTxt}>{error}</Text> : null}
+          {checkResult ? (
+            <Text style={styles.infoTxt}>{checkResult}</Text>
+          ) : null}
           <PrimaryButton label={t("signIn")} onPress={onSubmit} loading={busy} />
+          <PrimaryButton
+            label={checking ? t("loginCheckRunning") : t("loginCheckHost")}
+            variant="ghost"
+            onPress={onTestConnection}
+            loading={checking}
+          />
         </View>
 
         <Text style={styles.footer}>
@@ -237,6 +289,11 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.bodyMedium,
     color: colors.sgs.flashRed,
     fontSize: 14,
+  },
+  infoTxt: {
+    fontFamily: FONTS.body,
+    color: colors.sgs.textMuted,
+    fontSize: 13,
   },
   footer: {
     fontFamily: FONTS.body,

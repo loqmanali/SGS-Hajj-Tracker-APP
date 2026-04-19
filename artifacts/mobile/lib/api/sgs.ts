@@ -85,9 +85,56 @@ async function request<T>(path: string, init: RequestOpts = {}): Promise<T> {
     const msg =
       (body as { message?: string })?.message ||
       `Request failed (${res.status})`;
-    throw new ApiError(msg, res.status, body);
+    const err = new ApiError(msg, res.status, body);
+    // Surface the Retry-After header so the login screen can show a
+    // real cooldown timer instead of a generic "rate limited" message.
+    // RFC 7231 allows Retry-After to be either delta-seconds OR an
+    // HTTP-date — handle both, and fall back to 60 when the header is
+    // missing or unparseable so the UI never shows "Try again in NaNs".
+    if (res.status === 429) {
+      const retry = res.headers.get("Retry-After");
+      let secs: number | undefined;
+      if (retry) {
+        const asNum = Number(retry);
+        if (Number.isFinite(asNum) && asNum >= 0) {
+          secs = Math.round(asNum);
+        } else {
+          const ms = Date.parse(retry);
+          if (Number.isFinite(ms)) {
+            secs = Math.max(0, Math.round((ms - Date.now()) / 1000));
+          }
+        }
+      }
+      (err as ApiError & { retryAfter?: number }).retryAfter = secs ?? 60;
+    }
+    throw err;
   }
   return body as T;
+}
+
+// Lightweight reachability check. Used by the login screen's "Test
+// connection" button to separate "device cannot reach the SGS host"
+// (carrier APN whitelist, captive portal, DNS, TLS) from "credentials
+// are wrong / account is rate-limited". Bypasses the throwing request()
+// wrapper because we want to time the round-trip and report status
+// regardless of whether the body parses.
+export async function checkReachability(): Promise<{
+  ok: boolean;
+  status?: number;
+  ms: number;
+  error?: string;
+}> {
+  const t0 = Date.now();
+  try {
+    const res = await fetch(`${SGS_BASE_URL}/api/health`, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    });
+    return { ok: res.ok, status: res.status, ms: Date.now() - t0 };
+  } catch (e) {
+    const msg = (e as Error)?.message || "network error";
+    return { ok: false, ms: Date.now() - t0, error: msg };
+  }
 }
 
 // ---------- Public types (stable, screen-facing) ----------

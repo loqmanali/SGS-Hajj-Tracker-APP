@@ -24,7 +24,7 @@ import { APP_NAME, FONTS, ORG } from "@/constants/branding";
 import colors from "@/constants/colors";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLocale } from "@/contexts/LocaleContext";
-import { ApiError, SGS_BASE_URL, checkReachability } from "@/lib/api/sgs";
+import { ApiError, SGS_BASE_URL } from "@/lib/api/sgs";
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -47,8 +47,6 @@ export default function LoginScreen() {
   const [busy, setBusy] = useState(false);
   const [bioAvailable, setBioAvailable] = useState(false);
   const [bioEnabled, setBioEnabled] = useState(false);
-  const [checking, setChecking] = useState(false);
-  const [checkResult, setCheckResult] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -71,7 +69,6 @@ export default function LoginScreen() {
     }
     setBusy(true);
     setError(null);
-    setCheckResult(null);
     try {
       await auth.signIn(username.trim(), password);
       // Persist biometric preference selected on this screen so the next
@@ -111,25 +108,6 @@ export default function LoginScreen() {
       }
     } finally {
       setBusy(false);
-    }
-  };
-
-  const onTestConnection = async () => {
-    setChecking(true);
-    setCheckResult(null);
-    setError(null);
-    try {
-      const r = await checkReachability();
-      if (r.ok) {
-        setCheckResult(fmt(t("loginCheckOk"), { ms: r.ms }));
-      } else {
-        const reason = r.status
-          ? `HTTP ${r.status}`
-          : r.error || "network error";
-        setCheckResult(fmt(t("loginCheckBad"), { reason }));
-      }
-    } finally {
-      setChecking(false);
     }
   };
 
@@ -203,16 +181,7 @@ export default function LoginScreen() {
             </View>
           ) : null}
           {error ? <Text style={styles.errorTxt}>{error}</Text> : null}
-          {checkResult ? (
-            <Text style={styles.infoTxt}>{checkResult}</Text>
-          ) : null}
           <PrimaryButton label={t("signIn")} onPress={onSubmit} loading={busy} />
-          <PrimaryButton
-            label={checking ? t("loginCheckRunning") : t("loginCheckHost")}
-            variant="ghost"
-            onPress={onTestConnection}
-            loading={checking}
-          />
         </View>
 
         <Text style={styles.footer}>
@@ -289,11 +258,6 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.bodyMedium,
     color: colors.sgs.flashRed,
     fontSize: 14,
-  },
-  infoTxt: {
-    fontFamily: FONTS.body,
-    color: colors.sgs.textMuted,
-    fontSize: 13,
   },
   footer: {
     fontFamily: FONTS.body,

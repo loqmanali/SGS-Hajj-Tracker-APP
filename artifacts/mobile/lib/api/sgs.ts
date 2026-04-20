@@ -179,6 +179,31 @@ async function request<T>(path: string, init: RequestOpts = {}): Promise<T> {
   return body as T;
 }
 
+// Lightweight reachability check. Used by the login screen's "Test
+// connection" button to separate "device cannot reach the SGS host"
+// (carrier APN whitelist, captive portal, DNS, TLS) from "credentials
+// are wrong / account is rate-limited". Bypasses the throwing request()
+// wrapper because we want to time the round-trip and report status
+// regardless of whether the body parses.
+export async function checkReachability(): Promise<{
+  ok: boolean;
+  status?: number;
+  ms: number;
+  error?: string;
+}> {
+  const t0 = Date.now();
+  try {
+    const res = await fetch(`${SGS_BASE_URL}/api/health`, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    });
+    return { ok: res.ok, status: res.status, ms: Date.now() - t0 };
+  } catch (e) {
+    const msg = (e as Error)?.message || "network error";
+    return { ok: false, ms: Date.now() - t0, error: msg };
+  }
+}
+
 // ---------- Public types (stable, screen-facing) ----------
 
 export interface User {
@@ -471,6 +496,74 @@ function uuidv4(): string {
 
 // ---------- Endpoints ----------
 
+// ---------- Rapid-Scan / Hajj-check shapes ----------
+//
+// The live `/api/bags/hajj-check` endpoint returns a discriminator plus a
+// scattering of optional fields. Different builds have shipped slightly
+// different shapes (matched/hasAccommodation flags vs explicit status), so
+// the wire type is intentionally permissive and `normalizeHajjCheck` does
+// the folding.
+export type RawHajjCheck = {
+  status?: string;
+  result?: string;
+  matched?: boolean;
+  hasAccommodation?: boolean;
+  bagTag?: string;
+  tag?: string;
+  pilgrimName?: string;
+  passengerName?: string;
+  accommodationName?: string;
+  hotelName?: string;
+  accommodationAddress?: string;
+  hotelAddress?: string;
+  reason?: string;
+  message?: string;
+};
+
+export type HajjCheckResult = {
+  status: "green" | "amber" | "red";
+  bagTag: string;
+  pilgrimName?: string;
+  accommodationName?: string;
+  accommodationAddress?: string;
+  /** Machine-readable reason on red (e.g. "unknown_tag", "non_hajj"). */
+  reason?: string;
+  /** Server-provided human message (used as fallback for the flash). */
+  message?: string;
+};
+
+function normalizeHajjCheck(
+  scannedTag: string,
+  raw: RawHajjCheck,
+): HajjCheckResult {
+  const bagTag = String(raw.bagTag ?? raw.tag ?? scannedTag);
+  const pilgrimName = raw.pilgrimName ?? raw.passengerName;
+  const accommodationName = raw.accommodationName ?? raw.hotelName;
+  const accommodationAddress =
+    raw.accommodationAddress ?? raw.hotelAddress;
+  const reason = raw.reason ?? raw.message;
+  const explicit = (raw.status ?? raw.result ?? "").toLowerCase();
+  let status: HajjCheckResult["status"];
+  if (explicit === "green" || explicit === "amber" || explicit === "red") {
+    status = explicit as HajjCheckResult["status"];
+  } else if (raw.matched === false) {
+    status = "red";
+  } else if (raw.hasAccommodation === false || !accommodationName) {
+    status = raw.matched === true || pilgrimName ? "amber" : "red";
+  } else {
+    status = "green";
+  }
+  return {
+    status,
+    bagTag,
+    pilgrimName,
+    accommodationName,
+    accommodationAddress,
+    reason,
+    message: raw.message,
+  };
+}
+
 export const sgsApi = {
   login: async (username: string, password: string): Promise<LoginResponse> => {
     const body = await request<ServerLoginBody>("/api/auth/login", {
@@ -574,8 +667,13 @@ export const sgsApi = {
         method: "POST",
         body: JSON.stringify({
           eventType: "COLLECTED_FROM_BELT",
-          flightGroupId: scan.groupId,
-          flightId: scan.flightId,
+          // Rapid Scan submits collected events without a pinned flight
+          // (the supervisor scans across multiple flights at the belt).
+          // Send `null` rather than an empty string so the server can
+          // derive the manifest from the bag tag itself instead of
+          // failing zod validation on an empty UUID.
+          flightGroupId: scan.groupId || null,
+          flightId: scan.flightId || null,
           locationName: scan.source,
           correlationId: uuidv4(),
           // Stable per-install id so the backend can reliably dedupe
@@ -709,6 +807,73 @@ export const sgsApi = {
         // The agent has already received/shared the snapshot, so we degrade
         // gracefully instead of surfacing a scary error.
         return { recorded: false, reason: "audit_endpoint_unavailable" };
+      }
+      throw err;
+    }
+  },
+
+  /**
+   * Hajj-check lookup powering the Rapid Scan screen. Maps the live
+   * `/api/bags/hajj-check?tag=…` response onto a small client-friendly
+   * shape with three explicit statuses:
+   *   - "green"  → bag is on a Hajj manifest AND has accommodation assigned
+   *   - "amber"  → bag is on a Hajj manifest but no accommodation yet
+   *   - "red"    → tag isn't a Hajj bag, isn't recognized, or has no
+   *                Nusuk match
+   *
+   * Field mapping is defensive: the live backend has been observed to
+   * return either `{ status }` directly or a richer object with
+   * `{ matched, hasAccommodation }` — we accept both. Callers only need
+   * to branch on `status`.
+   */
+  hajjCheck: async (tagNumber: string): Promise<HajjCheckResult> => {
+    try {
+      const raw = await request<RawHajjCheck>(
+        `/api/bags/hajj-check?tag=${encodeURIComponent(tagNumber)}`,
+      );
+      return normalizeHajjCheck(tagNumber, raw);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        return {
+          status: "red",
+          bagTag: tagNumber,
+          reason: "unknown_tag",
+          message: "Unknown tag",
+        };
+      }
+      throw err;
+    }
+  },
+
+  /**
+   * Log a red-flash scan (unknown tag / non-Hajj / no Nusuk match) for
+   * supervisor audit. Mirrors the web Rapid Scan flow which writes to
+   * `red_scan_events`. Treated as best-effort: a 404/405 from the
+   * backend (route not deployed) degrades to `{ recorded: false }`
+   * rather than spamming the agent with errors — the screen has
+   * already shown the red flash to the operator.
+   */
+  logRedScan: async (input: {
+    tagNumber: string;
+    reason: string;
+    flightId?: string;
+  }): Promise<{ recorded: boolean; reason?: string }> => {
+    try {
+      await request("/api/red-scans", {
+        method: "POST",
+        body: JSON.stringify({
+          bagTag: input.tagNumber,
+          reason: input.reason,
+          flightId: input.flightId,
+        }),
+      });
+      return { recorded: true };
+    } catch (err) {
+      if (
+        err instanceof ApiError &&
+        (err.status === 404 || err.status === 405)
+      ) {
+        return { recorded: false, reason: "endpoint_unavailable" };
       }
       throw err;
     }

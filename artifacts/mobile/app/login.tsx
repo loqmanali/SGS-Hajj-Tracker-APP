@@ -24,7 +24,7 @@ import { APP_NAME, FONTS, ORG } from "@/constants/branding";
 import colors from "@/constants/colors";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLocale } from "@/contexts/LocaleContext";
-import { SGS_BASE_URL } from "@/lib/api/sgs";
+import { ApiError, SGS_BASE_URL } from "@/lib/api/sgs";
 
 export default function LoginScreen() {
   const auth = useAuth();
@@ -59,6 +59,9 @@ export default function LoginScreen() {
     })();
   }, []);
 
+  const fmt = (template: string, vars: Record<string, string | number>) =>
+    template.replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? ""));
+
   const onSubmit = async () => {
     if (!username.trim() || !password) {
       setError(t("enterCredentials"));
@@ -85,6 +88,10 @@ export default function LoginScreen() {
       ) {
         setError(t("offlineLogin"));
       } else {
+        // Unknown internal error — don't mislabel it as a reachability
+        // problem. Surface the raw message if any, else the generic
+        // "Login failed" copy.
+        const msg = (err as Error)?.message;
         setError(msg || t("loginFailed"));
       }
     } finally {

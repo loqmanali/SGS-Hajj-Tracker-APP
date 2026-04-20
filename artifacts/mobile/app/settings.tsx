@@ -21,7 +21,6 @@ import colors from "@/constants/colors";
 import { useLocale } from "@/contexts/LocaleContext";
 import { useOtaUpdater, type OtaCheckPhase } from "@/hooks/useOtaUpdater";
 import {
-  isDataWedgeAvailable,
   reconfigureZebraProfile,
   useScannerMode,
 } from "@/hooks/useScanner";
@@ -71,16 +70,6 @@ export default function SettingsScreen() {
     return () => {
       if (copyTimer.current) clearTimeout(copyTimer.current);
       if (reconfigTimer.current) clearTimeout(reconfigTimer.current);
-    };
-  }, []);
-
-  useEffect(() => {
-    let alive = true;
-    isDataWedgeAvailable().then((present) => {
-      if (alive) setDataWedgePresent(present);
-    });
-    return () => {
-      alive = false;
     };
   }, []);
 
@@ -263,7 +252,12 @@ export default function SettingsScreen() {
             />
           </View>
 
-          {isZebra && dataWedgePresent ? (
+          {/* Render the Zebra reconfigure block whenever we're on Zebra
+              hardware, even if DataWedge isn't installed. The button
+              itself reports the missing-DataWedge case via the
+              reconfigureZebraProfile() result so the operator gets
+              explicit feedback instead of a silently hidden control. */}
+          {isZebra ? (
             <View style={styles.diagBlock}>
               <Text style={styles.toggleLabel}>{t("reconfigureScanner")}</Text>
               <Text style={styles.toggleBody}>

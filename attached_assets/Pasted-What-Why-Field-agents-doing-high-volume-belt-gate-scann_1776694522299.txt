@@ -1,0 +1,61 @@
+What & Why
+Field agents doing high-volume belt/gate scanning need a dedicated, distraction-free interface that shows an immediate color-coded full-screen result for every scan — no forms, no menus, just the signal, bag tag, pilgrim name, and accommodation. The existing Scan page is too complex for rapid belt scanning where agents process hundreds of bags in minutes.
+
+Done looks like
+A new "Rapid Scan" page accessible from the sidebar for admin, duty_manager, and airport_ops roles only
+Full-screen color flash for 1.5 seconds after each scan with three states:
+🟢 Green — valid Hajj bag with accommodation assigned: shows hotel name and address
+🟡 Amber — valid Hajj bag but no accommodation assigned: shows "Manifested – Not Assigned"
+🔴 Red — unrecognized tag, non-Hajj bag, or no Nusuk match: shows the reason
+The last scanned bag tag and (if matched) the pilgrim's name are shown on screen
+A session counter tracks green, amber, and red scan counts for the current shift
+Flight context selector at the top so the agent can optionally associate scans to a flight
+Hardware barcode scanner (keyboard wedge) works without clicking — input auto-focuses
+Camera scan button available as a fallback
+Offline-capable: uses the same offline queue as the existing Scan page; green/amber scans are queued with event type COLLECTED_FROM_BELT when offline
+Red scans are logged to the red_scan_events table (same logic as existing Scan page)
+Audio feedback: distinct tones via Web Audio API (no external files):
+Green: pleasant two-note chime
+Amber: single mid-tone beep
+Red: low buzz
+Arabic/English bilingual with proper RTL layout
+Session can be reset with a "Clear session" button
+Out of scope
+Access for logistics_supervisor, ops_manager, driver, or other roles
+Event type selection (fixed to COLLECTED_FROM_BELT)
+Signature capture or photo upload
+Delivery / handover workflow
+Group-level bulk receive
+Steps
+Extend hajj-check API response — Update GET /api/bags/hajj-check in server/routes.ts to also return accommodationAddress (the address field from the matched location record) alongside the existing accommodationName, so the frontend can display hotel + address.
+
+New page component — Create client/src/pages/rapid-scan.tsx with:
+
+Full-screen green/amber/red color feedback panel
+Three-state logic: green (Hajj + accommodation), amber (Hajj + no accommodation), red (non-Hajj or unrecognized)
+Keyboard-wedge input (auto-focus, same pattern as existing Scan page)
+Camera barcode scanning fallback
+Session counter (green / amber / red counts)
+Flight context selector
+Last-scan info panel showing bag tag, pilgrim name, and hotel/address or reason
+Session reset button
+Offline queue integration for green/amber scans
+Red scan event logging for red scans
+Audio feedback — Implement three short Web Audio API tones (green chime, amber beep, red buzz) with no external audio files.
+
+Routing and sidebar — Register the route at /rapid-scan in App.tsx, add a nav item labeled "Rapid Scan" (with a Zap icon) to the admin, duty_manager, and airport_ops role menus in app-sidebar.tsx.
+
+Translations — Add English and Arabic translation keys for all new strings in en.ts and ar.ts.
+
+Relevant files
+server/routes.ts:4587-4627
+client/src/pages/scan.tsx
+client/src/components/app-sidebar.tsx
+client/src/App.tsx
+client/src/lib/locales/en.ts
+client/src/lib/locales/ar.ts
+client/src/lib/deviceDetection.ts
+client/src/lib/offlineQueue.ts
+client/src/lib/barcodeUtils.ts
+client/src/lib/useOfflineQueue.ts
+shared/schema.ts:67-79

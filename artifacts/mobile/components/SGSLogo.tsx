@@ -2,7 +2,7 @@ import React from "react";
 import { Image } from "react-native";
 
 const LOGO_SOURCE = require("../assets/images/sgs-logo.png");
-const LOGO_ASPECT = 1754 / 397;
+const LOGO_ASPECT = 2084 / 626;
 
 /**
  * Official SGS mark — green gear + white "SGS" wordmark. Rendered from

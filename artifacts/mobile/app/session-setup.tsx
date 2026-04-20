@@ -1,19 +1,12 @@
 import { Feather } from "@expo/vector-icons";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useQueries } from "@tanstack/react-query";
 import {
   cacheAssignments,
   cacheFlights,
-  cacheGroups,
   getCachedAssignments,
   getCachedFlights,
-  getCachedGroups,
-  getCachedManifest,
 } from "@/lib/db/storage";
-import type {
-  BagGroup as BagGroupT,
-  Flight as FlightT,
-  ManifestBag as ManifestBagT,
-} from "@/lib/api/sgs";
+import type { Flight as FlightT } from "@/lib/api/sgs";
 import { useRouter } from "expo-router";
 import React, { useState } from "react";
 import {
@@ -34,8 +27,7 @@ import colors from "@/constants/colors";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLocale } from "@/contexts/LocaleContext";
 import { useSession } from "@/contexts/SessionContext";
-import { sgsApi, type BagGroup, type Flight } from "@/lib/api/sgs";
-import { cacheManifest } from "@/lib/db/storage";
+import { sgsApi, type Flight } from "@/lib/api/sgs";
 import type { StringKey } from "@/lib/i18n";
 
 export default function SessionSetupScreen() {
@@ -45,14 +37,10 @@ export default function SessionSetupScreen() {
   const insets = useSafeAreaInsets();
   const { t, locale, setLocale } = useLocale();
 
-  const [selectedFlight, setSelectedFlight] = useState<Flight | null>(null);
-  const [pendingGroup, setPendingGroup] = useState<BagGroup | null>(null);
   const [busy, setBusy] = useState(false);
-  const [progressText, setProgressText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [flightsCacheAt, setFlightsCacheAt] = useState<string | null>(null);
-  const [groupsCacheAt, setGroupsCacheAt] = useState<string | null>(null);
 
   // Per-flight assignments are a concept that only applies to roles whose
   // duty roster pins them to specific flights (e.g. belt agents working a
@@ -121,227 +109,111 @@ export default function SessionSetupScreen() {
       });
   }, [flightsQ.data, assignmentsQ.data]);
 
-  const groupsQ = useQuery({
-    queryKey: ["groups", selectedFlight?.id],
-    queryFn: async () => {
-      try {
-        const fresh = await sgsApi.groups(selectedFlight!.id);
-        await cacheGroups(selectedFlight!.id, fresh);
-        setGroupsCacheAt(new Date().toISOString());
-        return fresh;
-      } catch (err) {
-        const cached = await getCachedGroups<BagGroupT[]>(selectedFlight!.id);
-        if (cached.data) {
-          setGroupsCacheAt(cached.cachedAt);
-          return cached.data;
-        }
-        throw err;
-      }
-    },
-    enabled: !!selectedFlight,
-  });
-
-  // The live SGS `/api/flight-groups` response does not include a pilgrim
-  // count. To still surface a real number on each card we fetch each
-  // group's manifest in parallel and derive the count from the unique
-  // pilgrim names. Manifests are also written through to the offline cache
-  // (and read from it on failure) so this work doubles as a prefetch for
-  // the eventual `startSession` call.
-  const manifestQs = useQueries({
-    queries: (groupsQ.data ?? []).map((g) => ({
-      queryKey: ["manifest", g.id],
-      queryFn: async (): Promise<ManifestBagT[]> => {
-        try {
-          const fresh = await sgsApi.manifest(g.id);
-          await cacheManifest(g.id, fresh);
-          return fresh;
-        } catch (err) {
-          const cached = await getCachedManifest(g.id);
-          if (cached) return cached;
-          throw err;
-        }
-      },
-      enabled: !!selectedFlight,
-      staleTime: 60_000,
-      retry: 0,
-    })),
-  });
-
-  const pilgrimCounts = React.useMemo(() => {
-    const out: Record<string, { count?: number; loading: boolean }> = {};
-    (groupsQ.data ?? []).forEach((g, i) => {
-      const q = manifestQs[i];
-      if (!q || q.isLoading) {
-        out[g.id] = { loading: true };
-        return;
-      }
-      const bags = q.data ?? [];
-      // Some pilgrims have multiple bags, so count distinct names. Bags
-      // missing a name (rare, but possible for no-tag entries) are
-      // ignored to avoid inflating the total.
-      const names = new Set<string>();
-      for (const b of bags) {
-        const n = b.pilgrimName?.trim();
-        if (n) names.add(n);
-      }
-      out[g.id] = { count: names.size, loading: false };
-    });
-    return out;
-  }, [groupsQ.data, manifestQs]);
-
-  const startSession = async (group: BagGroup) => {
-    if (!selectedFlight) return;
+  const startFlightSession = async (flight: Flight) => {
     setBusy(true);
     setError(null);
-    setProgressText(t("loadingManifest"));
     try {
-      const manifest = await sgsApi.manifest(group.id);
-      setProgressText(
-        t("loadingManifestN").replace("{n}", String(manifest.length)),
-      );
-      await cacheManifest(group.id, manifest);
+      // Flight-only session: the scan screen now renders a per-group
+      // cards grid above the camera and resolves each scan's group from
+      // the merged flight manifest. We deliberately do NOT prefetch the
+      // groups / manifests here — the scan screen owns that fetch and
+      // gracefully falls back to cached manifests on a poor link.
       await session.setSession({
-        flight: selectedFlight,
-        group,
+        flight,
         startedAt: new Date().toISOString(),
       });
       router.replace("/scan");
     } catch (err) {
       setError((err as Error).message || t("couldNotLoadManifest"));
-      setPendingGroup(null);
     } finally {
       setBusy(false);
-      setProgressText(null);
     }
   };
-
-  if (!selectedFlight) {
-    return (
-      <View style={styles.flex}>
-        <ScreenHeader
-          title={t("selectFlight")}
-          subtitle={
-            flightsCacheAt && flightsQ.isError
-              ? `${t("offlineCached")} ${formatTimeAgo(flightsCacheAt, t)}`
-              : auth.user?.name
-          }
-          showLogo
-          right={
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
-              <Pressable
-                onPress={() => setLocale(locale === "ar" ? "en" : "ar")}
-                hitSlop={10}
-              >
-                <Text
-                  style={{
-                    color: colors.sgs.textPrimary,
-                    fontFamily: FONTS.bodyMedium,
-                    fontSize: 13,
-                  }}
-                >
-                  {t("language")}
-                </Text>
-              </Pressable>
-              <Pressable onPress={() => auth.signOut()} hitSlop={12}>
-                <Feather name="log-out" size={20} color={colors.sgs.textMuted} />
-              </Pressable>
-            </View>
-          }
-        />
-        {flightsQ.isLoading ? (
-          <View style={styles.center}>
-            <ActivityIndicator color={colors.sgs.green} />
-          </View>
-        ) : flightsQ.error ? (
-          <ErrorState
-            message={(flightsQ.error as Error).message}
-            onRetry={() => flightsQ.refetch()}
-          />
-        ) : (
-          <FlatList
-            data={flights}
-            keyExtractor={(f) => f.id}
-            contentContainerStyle={[
-              styles.list,
-              { paddingBottom: insets.bottom + 24 },
-            ]}
-            ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
-            ListHeaderComponent={
-              canRapidScan ? (
-                <Pressable
-                  onPress={() => router.push("/rapid-scan")}
-                  style={({ pressed }) => [
-                    styles.rapidCard,
-                    pressed && styles.cardPressed,
-                  ]}
-                  accessibilityRole="button"
-                  accessibilityLabel={t("rapidScan")}
-                >
-                  <View style={styles.rapidIcon}>
-                    <Feather name="zap" size={20} color={colors.sgs.green} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.rapidTitle}>{t("rapidScan")}</Text>
-                    <Text style={styles.rapidSub}>{t("rapidScanSub")}</Text>
-                  </View>
-                  <Feather
-                    name="chevron-right"
-                    size={20}
-                    color={colors.sgs.textMuted}
-                  />
-                </Pressable>
-              ) : null
-            }
-            renderItem={({ item }) => (
-              <FlightCard flight={item} onPress={() => setSelectedFlight(item)} />
-            )}
-            ListEmptyComponent={
-              <Text style={styles.empty}>{t("noFlights")}</Text>
-            }
-          />
-        )}
-      </View>
-    );
-  }
 
   return (
     <View style={styles.flex}>
       <ScreenHeader
-        title={selectedFlight.flightNumber}
+        title={t("selectFlight")}
         subtitle={
-          groupsCacheAt && groupsQ.isError
-            ? `${t("offlineCached")} ${formatTimeAgo(groupsCacheAt, t)}`
-            : selectedFlight.destination
+          flightsCacheAt && flightsQ.isError
+            ? `${t("offlineCached")} ${formatTimeAgo(flightsCacheAt, t)}`
+            : auth.user?.name
         }
-        onBack={() => setSelectedFlight(null)}
+        showLogo
+        right={
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
+            <Pressable
+              onPress={() => setLocale(locale === "ar" ? "en" : "ar")}
+              hitSlop={10}
+            >
+              <Text
+                style={{
+                  color: colors.sgs.textPrimary,
+                  fontFamily: FONTS.bodyMedium,
+                  fontSize: 13,
+                }}
+              >
+                {t("language")}
+              </Text>
+            </Pressable>
+            <Pressable onPress={() => auth.signOut()} hitSlop={12}>
+              <Feather name="log-out" size={20} color={colors.sgs.textMuted} />
+            </Pressable>
+          </View>
+        }
       />
-      {groupsQ.isLoading ? (
+      {flightsQ.isLoading ? (
         <View style={styles.center}>
           <ActivityIndicator color={colors.sgs.green} />
         </View>
-      ) : groupsQ.error ? (
+      ) : flightsQ.error ? (
         <ErrorState
-          message={(groupsQ.error as Error).message}
-          onRetry={() => groupsQ.refetch()}
+          message={(flightsQ.error as Error).message}
+          onRetry={() => flightsQ.refetch()}
         />
       ) : (
         <FlatList
-          data={groupsQ.data ?? []}
-          keyExtractor={(g) => g.id}
+          data={flights}
+          keyExtractor={(f) => f.id}
           contentContainerStyle={[
             styles.list,
             { paddingBottom: insets.bottom + 24 },
           ]}
           ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
+          ListHeaderComponent={
+            canRapidScan ? (
+              <Pressable
+                onPress={() => router.push("/rapid-scan")}
+                style={({ pressed }) => [
+                  styles.rapidCard,
+                  pressed && styles.cardPressed,
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel={t("rapidScan")}
+              >
+                <View style={styles.rapidIcon}>
+                  <Feather name="zap" size={20} color={colors.sgs.green} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.rapidTitle}>{t("rapidScan")}</Text>
+                  <Text style={styles.rapidSub}>{t("rapidScanSub")}</Text>
+                </View>
+                <Feather
+                  name="chevron-right"
+                  size={20}
+                  color={colors.sgs.textMuted}
+                />
+              </Pressable>
+            ) : null
+          }
           renderItem={({ item }) => (
-            <GroupCard
-              group={item}
-              pilgrims={pilgrimCounts[item.id]}
-              onPress={() => setPendingGroup(item)}
+            <FlightCard
+              flight={item}
+              onPress={() => startFlightSession(item)}
             />
           )}
           ListEmptyComponent={
-            <Text style={styles.empty}>{t("noGroups")}</Text>
+            <Text style={styles.empty}>{t("noFlights")}</Text>
           }
         />
       )}
@@ -353,45 +225,7 @@ export default function SessionSetupScreen() {
       {busy ? (
         <View pointerEvents="auto" style={styles.busyOverlay}>
           <ActivityIndicator color={colors.sgs.green} size="large" />
-          <Text style={styles.busyTxt}>{progressText ?? t("loading")}</Text>
-        </View>
-      ) : null}
-      {pendingGroup ? (
-        <View style={styles.confirmOverlay}>
-          <View style={styles.confirmCard}>
-            <Text style={styles.confirmTitle}>
-              {t("groupLabel")} {pendingGroup.groupNumber}
-            </Text>
-            <Text style={styles.confirmSub}>
-              {(() => {
-                const p = pilgrimCounts[pendingGroup.id];
-                const fromApi = pendingGroup.pilgrimCount;
-                const count =
-                  typeof fromApi === "number" ? fromApi : p?.count;
-                if (typeof count === "number") {
-                  return `${count} ${t("pilgrims")} · ${pendingGroup.expectedBags} ${t("bags")}`;
-                }
-                if (p?.loading) {
-                  return `… ${t("pilgrims")} · ${pendingGroup.expectedBags} ${t("bags")}`;
-                }
-                return `${pendingGroup.expectedBags} ${t("bags")}`;
-              })()}
-            </Text>
-            <Text style={styles.confirmSub}>
-              {selectedFlight.flightNumber} · {selectedFlight.destination}
-            </Text>
-            <View style={{ height: 16 }} />
-            <PrimaryButton
-              label={t("startScanning")}
-              onPress={() => startSession(pendingGroup)}
-            />
-            <View style={{ height: 8 }} />
-            <PrimaryButton
-              label={t("cancel")}
-              variant="ghost"
-              onPress={() => setPendingGroup(null)}
-            />
-          </View>
+          <Text style={styles.busyTxt}>{t("loading")}</Text>
         </View>
       ) : null}
     </View>
@@ -441,56 +275,6 @@ function FlightCard({
           {flight.bagCount} {t("bags")}
         </Text>
       </View>
-    </Pressable>
-  );
-}
-
-function GroupCard({
-  group,
-  pilgrims,
-  onPress,
-}: {
-  group: BagGroup;
-  pilgrims?: { count?: number; loading: boolean };
-  onPress: () => void;
-}) {
-  const { t } = useLocale();
-  const pct = group.expectedBags
-    ? Math.min(100, Math.round((group.scannedBags / group.expectedBags) * 100))
-    : 0;
-  // Prefer the count the server explicitly sent; otherwise fall back to
-  // the manifest-derived count. Show a "…" placeholder while the manifest
-  // request is still in flight so the card never lies with "0 pilgrims".
-  const count =
-    typeof group.pilgrimCount === "number"
-      ? group.pilgrimCount
-      : pilgrims?.count;
-  let sub: string;
-  if (typeof count === "number") {
-    sub = `${count} ${t("pilgrims")} · ${group.expectedBags} ${t("bags")}`;
-  } else if (pilgrims?.loading) {
-    sub = `… ${t("pilgrims")} · ${group.expectedBags} ${t("bags")}`;
-  } else {
-    sub = `${group.expectedBags} ${t("bags")}`;
-  }
-  return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
-    >
-      <View style={styles.cardRow}>
-        <Text style={styles.cardTitle}>
-          {t("groupLabel")} {group.groupNumber}
-        </Text>
-        {group.assigned ? <AssignedBadge /> : null}
-      </View>
-      <Text style={styles.cardSub}>{sub}</Text>
-      <View style={styles.progressTrack}>
-        <View style={[styles.progressFill, { width: `${pct}%` }]} />
-      </View>
-      <Text style={styles.metaTxt}>
-        {group.scannedBags}/{group.expectedBags} {t("scannedSuffix")} · {pct}%
-      </Text>
     </Pressable>
   );
 }
@@ -585,17 +369,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.sgs.textMuted,
   },
-  progressTrack: {
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.sgs.surfaceElevated,
-    overflow: "hidden",
-    marginTop: 4,
-  },
-  progressFill: {
-    height: "100%",
-    backgroundColor: colors.sgs.green,
-  },
   errMsg: {
     fontFamily: FONTS.body,
     color: colors.sgs.textPrimary,
@@ -623,31 +396,5 @@ const styles = StyleSheet.create({
     color: colors.sgs.textPrimary,
     fontFamily: FONTS.bodyMedium,
     fontSize: 14,
-  },
-  confirmOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.85)",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 24,
-  },
-  confirmCard: {
-    width: "100%",
-    backgroundColor: colors.sgs.surface,
-    borderColor: colors.sgs.border,
-    borderWidth: 1,
-    borderRadius: 16,
-    padding: 20,
-  },
-  confirmTitle: {
-    fontFamily: FONTS.bodyBold,
-    fontSize: 22,
-    color: colors.sgs.textPrimary,
-    marginBottom: 4,
-  },
-  confirmSub: {
-    fontFamily: FONTS.body,
-    fontSize: 14,
-    color: colors.sgs.textMuted,
   },
 });

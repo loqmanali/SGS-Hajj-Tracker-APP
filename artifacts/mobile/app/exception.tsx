@@ -1,6 +1,8 @@
+import { useQuery } from "@tanstack/react-query";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
@@ -20,6 +22,7 @@ import colors from "@/constants/colors";
 import { useLocale } from "@/contexts/LocaleContext";
 import { useScanQueue } from "@/contexts/ScanQueueContext";
 import { useSession } from "@/contexts/SessionContext";
+import { sgsApi } from "@/lib/api/sgs";
 
 const REASONS = [
   { value: "MISSING", label: "Missing" },
@@ -34,11 +37,31 @@ export default function ExceptionScreen() {
   const queue = useScanQueue();
   const { t } = useLocale();
   const insets = useSafeAreaInsets();
-  // Accept ?tag=... from the scan screen so a red flash on a real tag
-  // pre-fills the form. Falls back to empty for direct nav from the
-  // footer.
-  const params = useLocalSearchParams<{ tag?: string | string[] }>();
+  // Accept ?tag=... and ?groupId=... from the scan screen. The tag
+  // pre-fills the form on red flash. The groupId routes the exception
+  // to the right group when the agent reached this screen from a
+  // group card; otherwise we fall back to a session-pinned group.
+  const params = useLocalSearchParams<{
+    tag?: string | string[];
+    groupId?: string | string[];
+  }>();
   const initialTag = Array.isArray(params.tag) ? params.tag[0] : params.tag;
+  const paramGroupId = Array.isArray(params.groupId)
+    ? params.groupId[0]
+    : params.groupId;
+  const [pickedGroupId, setPickedGroupId] = useState<string | null>(null);
+  const groupId =
+    paramGroupId ?? session.session?.group?.id ?? pickedGroupId ?? null;
+
+  // Lazy fetch of groups for the picker fallback. Only enabled when no
+  // group has been resolved any other way, so the network call is
+  // skipped on the common scan→exception path that already passes
+  // ?groupId.
+  const groupsQ = useQuery({
+    queryKey: ["groups", session.session?.flight.id],
+    queryFn: () => sgsApi.groups(session.session!.flight.id),
+    enabled: !!session.session && !groupId,
+  });
 
   const [tag, setTag] = useState(initialTag ?? "");
   const [reason, setReason] = useState<string | null>(null);
@@ -47,7 +70,55 @@ export default function ExceptionScreen() {
 
   if (!session.session) return null;
 
+  if (!groupId) {
+    return (
+      <View style={styles.flex}>
+        <ScreenHeader
+          title="Log Exception"
+          subtitle={t("pickGroup")}
+          onBack={() => router.back()}
+        />
+        <ScrollView
+          contentContainerStyle={[
+            styles.scroll,
+            { paddingBottom: insets.bottom + 24 },
+          ]}
+        >
+          <Text style={styles.pickerHint}>{t("pickGroupHint")}</Text>
+          {groupsQ.isLoading ? (
+            <ActivityIndicator color={colors.sgs.green} />
+          ) : (groupsQ.data ?? []).length === 0 ? (
+            <Text style={styles.pickerHint}>{t("noGroupsForFlight")}</Text>
+          ) : (
+            (groupsQ.data ?? []).map((g) => (
+              <Pressable
+                key={g.id}
+                onPress={() => setPickedGroupId(g.id)}
+                style={({ pressed }) => [
+                  styles.pickerRow,
+                  pressed && { opacity: 0.6 },
+                ]}
+              >
+                <Text style={styles.pickerRowTitle}>{g.groupNumber}</Text>
+                <Text style={styles.pickerRowSub}>
+                  {g.scannedBags}/{g.expectedBags}
+                </Text>
+              </Pressable>
+            ))
+          )}
+        </ScrollView>
+      </View>
+    );
+  }
+
   const submit = async () => {
+    if (!groupId) {
+      Alert.alert(
+        "Pick a group",
+        "Open this screen from a group card so the exception is routed correctly.",
+      );
+      return;
+    }
     if (!tag.trim() || !reason) {
       Alert.alert("Missing info", "Enter a tag number and select a reason.");
       return;
@@ -62,7 +133,7 @@ export default function ExceptionScreen() {
       // saved locally and will sync.
       const result = await queue.enqueueException({
         tagNumber: tag.trim(),
-        groupId: session.session!.group.id,
+        groupId: groupId!,
         flightId: session.session!.flight.id,
         reason,
         notes: notes.trim() || undefined,
@@ -175,6 +246,33 @@ const styles = StyleSheet.create({
   chipTxt: {
     color: colors.sgs.textPrimary,
     fontFamily: FONTS.bodyMedium,
+    fontSize: 13,
+  },
+  pickerHint: {
+    color: colors.sgs.textMuted,
+    fontFamily: FONTS.body,
+    fontSize: 13,
+    paddingVertical: 4,
+  },
+  pickerRow: {
+    backgroundColor: colors.sgs.surface,
+    borderColor: colors.sgs.border,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  pickerRowTitle: {
+    color: colors.sgs.textPrimary,
+    fontFamily: FONTS.bodyBold,
+    fontSize: 15,
+  },
+  pickerRowSub: {
+    color: colors.sgs.textMuted,
+    fontFamily: FONTS.body,
     fontSize: 13,
   },
 });

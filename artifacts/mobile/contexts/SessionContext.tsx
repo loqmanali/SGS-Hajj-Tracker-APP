@@ -14,7 +14,16 @@ const SESSION_KEY = "sgs.session";
 
 type Session = {
   flight: Flight;
-  group: BagGroup;
+  /**
+   * Pinned bag group. Optional: in the flight-only flow (introduced when
+   * the scan screen learned to render a per-flight group-cards grid) the
+   * agent picks only a flight at session-setup and works every group of
+   * that flight from a single screen. Legacy pinned-group sessions still
+   * work — when set, scan/no-tag/bulk-receive prefer this group; when
+   * absent, those screens resolve the group per-bag from the merged
+   * flight manifest.
+   */
+  group?: BagGroup;
   startedAt: string;
 };
 

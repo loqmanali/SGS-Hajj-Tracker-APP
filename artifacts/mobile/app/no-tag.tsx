@@ -52,7 +52,8 @@ export default function NoTagScreen() {
       const result = await queue.enqueueNoTag({
         pilgrimName: pilgrimName.trim(),
         description: description.trim(),
-        groupId: session.session!.group.id,
+        // Flight-only no-tag flow: omit groupId so the backend resolves
+        // the bag onto the flight; supervisors route it to a group later.
         flightId: session.session!.flight.id,
         // Forward the agent's station code (e.g. "JED") so the backend
         // generates a tag like "NOTAG-JED-006" rather than defaulting to

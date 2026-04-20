@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import React, { useCallback, useMemo, useState } from "react";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   KeyboardAvoidingView,
   Platform,
@@ -22,7 +22,9 @@ import { useScanQueue } from "@/contexts/ScanQueueContext";
 import { useSession } from "@/contexts/SessionContext";
 import { useScannerMode, useZebraScanner } from "@/hooks/useScanner";
 import { decideScan, isSgsHajjTag, normalizeTag } from "@/lib/scanLogic";
+import { sgsApi, type BagGroup } from "@/lib/api/sgs";
 import {
+  cacheManifest,
   getCachedManifest,
   getScannedTags,
   markTagScanned,
@@ -45,6 +47,39 @@ export default function BulkReceiveScreen() {
   const isZebra = scannerSource === "zebra";
   const insets = useSafeAreaInsets();
   const { t } = useLocale();
+  // Accept ?groupId=... from the scan-screen group cards. Falls back to
+  // a session-pinned group for legacy sessions where session-setup
+  // pre-selected a group. The screen requires *some* group id to know
+  // where to credit the scans.
+  const params = useLocalSearchParams<{ groupId?: string | string[] }>();
+  const paramGroupId = Array.isArray(params.groupId)
+    ? params.groupId[0]
+    : params.groupId;
+  const groupId = paramGroupId ?? session.session?.group?.id ?? null;
+
+  // Resolve the group's display info (number, expected) for the header.
+  // Pulled from session.session.group when available; otherwise fetched
+  // on demand so a flight-only session can still label this screen.
+  const [resolvedGroup, setResolvedGroup] = useState<BagGroup | null>(
+    session.session?.group ?? null,
+  );
+  useEffect(() => {
+    if (!groupId || !session.session) return;
+    if (resolvedGroup && resolvedGroup.id === groupId) return;
+    let alive = true;
+    (async () => {
+      try {
+        const all = await sgsApi.groups(session.session!.flight.id);
+        const match = all.find((g) => g.id === groupId);
+        if (alive && match) setResolvedGroup(match);
+      } catch {
+        // Best-effort; the screen still works without a header subtitle.
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [groupId, session.session, resolvedGroup]);
 
   const [input, setInput] = useState("");
   const [rows, setRows] = useState<Row[]>([]);
@@ -87,12 +122,24 @@ export default function BulkReceiveScreen() {
   }, [rows]);
 
   const onAcceptAll = async () => {
-    if (!session.session) return;
+    if (!session.session || !groupId) return;
     setBusy(true);
     try {
-      const groupId = session.session.group.id;
       const flightId = session.session.flight.id;
-      const manifest = (await getCachedManifest(groupId)) ?? [];
+      // Prime the local manifest cache for this group on first use so the
+      // decideScan path has data even when this screen was reached
+      // straight from a flight-only session that hadn't visited this
+      // group yet.
+      let manifest = (await getCachedManifest(groupId)) ?? [];
+      if (manifest.length === 0) {
+        try {
+          const fresh = await sgsApi.manifest(groupId);
+          await cacheManifest(groupId, fresh);
+          manifest = fresh;
+        } catch {
+          // Stay with empty cache — scans will surface as NOT IN MANIFEST.
+        }
+      }
       const scanned = await getScannedTags(groupId);
 
       let accepted = 0;
@@ -145,13 +192,16 @@ export default function BulkReceiveScreen() {
     }
   };
 
-  if (!session.session) return null;
+  if (!session.session || !groupId) return null;
+
+  const groupNumber =
+    resolvedGroup?.groupNumber ?? session.session.group?.groupNumber ?? "—";
 
   return (
     <View style={styles.flex}>
       <ScreenHeader
         title={t("bulkReceiveTitle")}
-        subtitle={`${session.session.flight.flightNumber} · ${t("groupLabel")} ${session.session.group.groupNumber}`}
+        subtitle={`${session.session.flight.flightNumber} · ${t("groupLabel")} ${groupNumber}`}
         onBack={() => router.back()}
       />
       <KeyboardAvoidingView

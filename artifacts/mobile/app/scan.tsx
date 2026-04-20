@@ -1,11 +1,15 @@
 import { Feather } from "@expo/vector-icons";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { useFocusEffect, useRouter } from "expo-router";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
+  Easing,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   ToastAndroid,
@@ -26,7 +30,9 @@ import { useSession } from "@/contexts/SessionContext";
 import { useFlashFeedback } from "@/hooks/useFlashFeedback";
 import { useScannerMode, useZebraScanRaw, useZebraScanner } from "@/hooks/useScanner";
 import { decideScan, normalizeTag, parseBtpPdf417 } from "@/lib/scanLogic";
+import { sgsApi, type BagGroup, type ManifestBag } from "@/lib/api/sgs";
 import {
+  cacheManifest,
   getCachedManifest,
   getDebugRawScan,
   getOrCreateDeviceId,
@@ -34,6 +40,14 @@ import {
   markTagScanned,
 } from "@/lib/db/storage";
 import { Linking } from "react-native";
+
+type StringKeyT = Parameters<ReturnType<typeof useLocale>["t"]>[0];
+
+function statusForGroup(g: BagGroup): "PENDING" | "IN_PROGRESS" | "COMPLETE" {
+  if (g.expectedBags > 0 && g.scannedBags >= g.expectedBags) return "COMPLETE";
+  if (g.scannedBags > 0) return "IN_PROGRESS";
+  return "PENDING";
+}
 
 const DEBOUNCE_MS = 1500;
 const DEBOUNCE_RED_MS = 2000;
@@ -53,10 +67,17 @@ export default function ScanScreen() {
   const insets = useSafeAreaInsets();
   const { t, isRTL } = useLocale();
 
+  const queryClient = useQueryClient();
+
   const [permission, requestPermission] = useCameraPermissions();
-  const [scannedCount, setScannedCount] = useState(0);
-  const [expected, setExpected] = useState(0);
   const [lastTag, setLastTag] = useState<string | null>(null);
+  // Per-group local scan deltas keyed by groupId. The server-authoritative
+  // counter lives in the groups query (refetched after each green scan);
+  // this local map gives an instant tick + pulse before the network
+  // round-trip lands.
+  const [scanDelta, setScanDelta] = useState<Record<string, number>>({});
+  const [pulseGroupId, setPulseGroupId] = useState<string | null>(null);
+  const pulseAnim = useRef(new Animated.Value(0)).current;
   // "Show raw scan" diagnostic banner — opt-in from Settings. Holds the
   // most recent raw barcode payload + symbology so the agent can confirm
   // the camera is actually seeing tags. Auto-clears after ~2s.
@@ -89,14 +110,74 @@ export default function ScanScreen() {
     });
   }, []);
 
+  // Live group list for the active flight. Powers the cards grid and the
+  // flight-level totals shown in the header.
+  const flightId = session.session?.flight.id ?? null;
+  const groupsQ = useQuery({
+    queryKey: ["groups", flightId],
+    queryFn: () => sgsApi.groups(flightId as string),
+    enabled: !!flightId,
+    staleTime: 30_000,
+  });
+  const groups = groupsQ.data ?? [];
+
+  // Reset optimistic per-group deltas every time the server's `groups`
+  // payload refreshes — the new `scannedBags` already incorporates any
+  // scans we previously bumped locally. Without this reset, every
+  // queue-drained scan would be double-counted (delta + server) once
+  // the invalidate-triggered refetch landed.
   useEffect(() => {
-    if (!session.session) return;
-    (async () => {
-      const tags = await getScannedTags(session.session!.group.id);
-      setScannedCount(tags.size);
-      setExpected(session.session!.group.expectedBags);
-    })();
-  }, [session.session]);
+    setScanDelta({});
+  }, [groupsQ.dataUpdatedAt]);
+
+  // Parallel-fetch every group's manifest so `decideScan` can match a
+  // tag locally to *any* group on this flight (not just a single pinned
+  // one). Each manifest is also written through to the offline cache so
+  // a poor link mid-shift still resolves scans correctly.
+  const manifestQs = useQueries({
+    queries: groups.map((g) => ({
+      queryKey: ["manifest", g.id],
+      queryFn: async () => {
+        try {
+          const fresh = await sgsApi.manifest(g.id);
+          await cacheManifest(g.id, fresh);
+          return fresh;
+        } catch {
+          const cached = await getCachedManifest(g.id);
+          return cached ?? [];
+        }
+      },
+      enabled: !!flightId,
+      staleTime: 60_000,
+      retry: 0,
+    })),
+  });
+
+  // Merged tag → ManifestBag lookup across every group on this flight.
+  // Built once per render from the manifest queries' resolved data.
+  // Includes IATA license-plate aliases so an agent scanning the airline
+  // tag still resolves to the correct bag + group.
+  const mergedManifest = useMemo(() => {
+    const out = new Map<string, ManifestBag>();
+    manifestQs.forEach((q) => {
+      for (const bag of q.data ?? []) {
+        out.set(bag.tagNumber, bag);
+        if (bag.iataTag) out.set(bag.iataTag, bag);
+      }
+    });
+    return out;
+  }, [manifestQs]);
+
+  // Flight-level totals shown in the header. Server-authoritative
+  // `scannedBags` from the groups query, plus any local deltas that
+  // haven't been refetched yet.
+  const flightExpected = groups.reduce((s, g) => s + g.expectedBags, 0);
+  const flightScannedServer = groups.reduce((s, g) => s + g.scannedBags, 0);
+  const flightDelta = Object.values(scanDelta).reduce((s, n) => s + n, 0);
+  const flightScanned = Math.min(
+    flightExpected || flightScannedServer + flightDelta,
+    flightScannedServer + flightDelta,
+  );
 
   // Auto-request camera permission on consumer phones
   useEffect(() => {
@@ -172,6 +253,7 @@ export default function ScanScreen() {
   const handleScan = useCallback(
     async (raw: string) => {
       if (!session.session) return;
+      const sFlightId = session.session.flight.id;
       const tag = normalizeTag(raw);
       if (!tag) return;
       const now = Date.now();
@@ -186,16 +268,34 @@ export default function ScanScreen() {
       }
       lastScan.current = { tag, at: now, flash: undefined };
 
-      const groupId = session.session.group.id;
-      const flightId = session.session.flight.id;
-      const manifest = (await getCachedManifest(groupId)) ?? [];
-      const scannedTags = await getScannedTags(groupId);
+      // Resolve the tag against the merged flight-wide manifest. The
+      // matched bag's own `groupId` becomes the authoritative group for
+      // this scan — this is what lets one screen drive scans across
+      // every group on the flight without forcing the agent to drill
+      // down first.
+      const matched = mergedManifest.get(tag);
+      const matchedGroupId = matched?.groupId;
+      const flatManifest = Array.from(
+        new Set(Array.from(mergedManifest.values())),
+      );
 
+      // Per-group scanned set. Without a known groupId we fall back to
+      // an empty set — duplicate detection across groups is best-effort
+      // for unmatched tags and doesn't affect the queued payload.
+      const scannedTags = matchedGroupId
+        ? await getScannedTags(matchedGroupId)
+        : new Set<string>();
 
-
-      const decision = decideScan({ tagNumber: tag, groupId, manifest, scannedTags });
-
-
+      // Pass `groupId: undefined` to skip the wrong-group check — the
+      // merged manifest already encodes group membership, so any tag
+      // present in `flatManifest` is by definition in the right group
+      // for this flight.
+      const decision = decideScan({
+        tagNumber: tag,
+        groupId: undefined,
+        manifest: flatManifest,
+        scannedTags,
+      });
 
       lastScan.current = { tag, at: now, flash: decision.flash };
 
@@ -205,15 +305,9 @@ export default function ScanScreen() {
       const flashColor = offlineQueued ? "yellow" : decision.flash;
       const title = offlineQueued ? "QUEUED OFFLINE" : decision.title;
 
-      // For NOT IN MANIFEST, show a more descriptive subtitle so the
-      // agent understands this bag is not registered in this group.
       const isNotInManifest = decision.title === "NOT IN MANIFEST";
-      const subtitle = isNotInManifest
-        ? tag
-        : decision.subtitle;
-      const hint = isNotInManifest
-        ? t("notInManifestHint")
-        : undefined;
+      const subtitle = isNotInManifest ? tag : decision.subtitle;
+      const hint = isNotInManifest ? t("notInManifestHint") : undefined;
 
       trigger(
         { color: flashColor, title, subtitle, hint },
@@ -222,31 +316,44 @@ export default function ScanScreen() {
       setLastTag(tag);
       if (decision.flash === "red") setLastFailedTag(tag);
 
-      if (decision.flash === "green") {
-        await markTagScanned(groupId, tag);
-        setScannedCount(scannedTags.size + 1);
+      if (decision.flash === "green" && matchedGroupId) {
+        await markTagScanned(matchedGroupId, tag);
+        setScanDelta((prev) => ({
+          ...prev,
+          [matchedGroupId]: (prev[matchedGroupId] ?? 0) + 1,
+        }));
+        // Pulse the matching card so the agent sees which group ticked.
+        setPulseGroupId(matchedGroupId);
+        pulseAnim.setValue(0);
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 600,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }).start(() => setPulseGroupId(null));
+        // Refetch the server-authoritative counter so the card converges
+        // to the true value within ~1s of the scan.
+        queryClient.invalidateQueries({ queryKey: ["groups", sFlightId] });
       }
 
-      // Do not queue scans that are already known to be NOT IN MANIFEST
-      // offline — the server will always 404 them, filling the queue
-      // with noise. The agent can still use Exception for these bags.
-      if (decision.title === "NOT IN MANIFEST" && manifest.length > 0) {
+      if (decision.title === "NOT IN MANIFEST" && flatManifest.length > 0) {
         return;
       }
 
-      // Always queue the scan for server-side reconciliation (server is
-      // source of truth). `deviceId` lets the backend dedupe across
-      // devices and reinstalls.
+      // Always queue the scan for server-side reconciliation. `groupId`
+      // may be undefined for unmatched tags — the server resolves the
+      // group from the bag record at sync time.
       await queue.enqueue({
         tagNumber: tag,
-        groupId,
-        flightId,
+        // Omit when unmatched — server resolves the group at sync time.
+        groupId: matchedGroupId ?? undefined,
+        flightId: sFlightId,
         scannedAt: new Date(now).toISOString(),
         source: isZebra ? "zebra" : "camera",
         deviceId: deviceIdRef.current ?? undefined,
       });
     },
-    [isZebra, queue, session.session, trigger],
+    [isZebra, queue, session.session, trigger, mergedManifest, pulseAnim, queryClient, t],
     // queue.online is captured via closure each render; safe.
   );
 
@@ -273,23 +380,26 @@ export default function ScanScreen() {
 
   if (!session.session) return null;
 
-  const pct = expected ? Math.min(100, Math.round((scannedCount / expected) * 100)) : 0;
+  const pct = flightExpected
+    ? Math.min(100, Math.round((flightScanned / flightExpected) * 100))
+    : 0;
+  const role = auth.user?.role ?? "";
+  const showBulkOnCard = role !== "driver";
 
   return (
     <View style={styles.flex}>
       <ScreenHeader
-        title={
-          // isRTL
-          //   ? `${t("groupLabel")} ${session.session.group.groupNumber} · ${session.session.flight.flightNumber}`
-          //   : 
-            // `${session.session.flight.flightNumber} · ${t("groupLabel")} ${session.session.group.groupNumber}`
-            `${session.session.flight.flightNumber} · ${session.session.group.groupNumber}`
-        }
+        title={session.session.flight.flightNumber}
         subtitle={
           isRTL
-            ? `${pct}% · ${scannedCount}/${expected} ${t("bags")}`
-            : `${scannedCount}/${expected} ${t("bags")} · ${pct}%`
+            ? `${pct}% · ${flightScanned}/${flightExpected} ${t("bags")}`
+            : `${flightScanned}/${flightExpected} ${t("bags")} · ${pct}%`
         }
+        onBack={async () => {
+          // Switch flight: drop the session and return to flight pick.
+          await session.setSession(null);
+          router.replace("/session-setup");
+        }}
         right={
           <View style={styles.headerRight}>
             <StatusPill
@@ -366,12 +476,25 @@ export default function ScanScreen() {
         </View>
       ) : null}
 
+      <GroupCardsStrip
+        groups={groups}
+        loading={groupsQ.isLoading}
+        scanDelta={scanDelta}
+        pulseGroupId={pulseGroupId}
+        pulseAnim={pulseAnim}
+        showBulkReceive={showBulkOnCard}
+        onBulkReceive={(g) =>
+          router.push({ pathname: "/bulk-receive", params: { groupId: g.id } })
+        }
+        t={t}
+      />
+
       <View style={styles.body}>
         {isZebra ? (
           <ZebraIdleView
             lastTag={lastTag}
-            scanned={scannedCount}
-            expected={expected}
+            scanned={flightScanned}
+            expected={flightExpected}
           />
         ) : permission?.granted ? (
           cameraActive ? (
@@ -458,27 +581,34 @@ export default function ScanScreen() {
           <FooterButton
             icon="alert-triangle"
             label={t("exception")}
-            onPress={() =>
+            onPress={() => {
+              // Pre-fill the failed tag (red flash) so the agent doesn't
+              // have to re-key it. Only red-flash tags qualify — green
+              // matches are already in the system and shouldn't seed an
+              // exception form. The screen stays editable for any
+              // override case.
+              // If the failed tag is a known bag in another group on
+              // this flight (wrong-group case), forward that group id so
+              // the exception is routed to the bag's actual group
+              // without forcing the user through the picker.
+              const params: Record<string, string> = {};
+              if (lastFailedTag) {
+                params.tag = lastFailedTag;
+                const matched = mergedManifest.get(lastFailedTag);
+                if (matched?.groupId) {
+                  params.groupId = matched.groupId;
+                }
+              }
               router.push({
                 pathname: "/exception",
-                // Pre-fill the failed tag (red flash) so the agent doesn't
-                // have to re-key it. Only red-flash tags qualify — green
-                // matches are already in the system and shouldn't seed an
-                // exception form. The screen stays editable for any
-                // override case.
-                params: lastFailedTag ? { tag: lastFailedTag } : undefined,
-              })
-            }
+                params: Object.keys(params).length ? params : undefined,
+              });
+            }}
           />
           <FooterButton
             icon="edit-3"
             label={t("noTag")}
             onPress={() => router.push("/no-tag")}
-          />
-          <FooterButton
-            icon="layers"
-            label={t("bulkReceive")}
-            onPress={() => router.push("/bulk-receive")}
           />
           <FooterButton
             icon="refresh-cw"
@@ -508,6 +638,273 @@ export default function ScanScreen() {
     </View>
   );
 }
+
+function GroupCardsStrip({
+  groups,
+  loading,
+  scanDelta,
+  pulseGroupId,
+  pulseAnim,
+  showBulkReceive,
+  onBulkReceive,
+  t,
+}: {
+  groups: BagGroup[];
+  loading: boolean;
+  scanDelta: Record<string, number>;
+  pulseGroupId: string | null;
+  pulseAnim: Animated.Value;
+  showBulkReceive: boolean;
+  onBulkReceive: (g: BagGroup) => void;
+  t: (k: StringKeyT) => string;
+}) {
+  if (loading && groups.length === 0) {
+    return (
+      <View style={cardStripStyles.skeletonRow}>
+        <ActivityIndicator color={colors.sgs.green} />
+        <Text style={cardStripStyles.skeletonTxt}>{t("loadingGroups")}</Text>
+      </View>
+    );
+  }
+  if (!loading && groups.length === 0) {
+    return (
+      <View style={cardStripStyles.skeletonRow}>
+        <Text style={cardStripStyles.skeletonTxt}>
+          {t("noGroupsForFlight")}
+        </Text>
+      </View>
+    );
+  }
+  // Vertical 2-column grid above the camera/Zebra view. Height-capped
+  // so the scanner viewfinder below stays visible; the grid scrolls
+  // internally when the flight has many groups.
+  return (
+    <ScrollView
+      showsVerticalScrollIndicator={false}
+      contentContainerStyle={cardStripStyles.grid}
+      style={cardStripStyles.strip}
+    >
+      {groups.map((g) => (
+        <GroupCard
+          key={g.id}
+          group={g}
+          delta={scanDelta[g.id] ?? 0}
+          pulse={pulseGroupId === g.id}
+          pulseAnim={pulseAnim}
+          showBulkReceive={showBulkReceive}
+          onBulkReceive={() => onBulkReceive(g)}
+          t={t}
+        />
+      ))}
+    </ScrollView>
+  );
+}
+
+function GroupCard({
+  group,
+  delta,
+  pulse,
+  pulseAnim,
+  showBulkReceive,
+  onBulkReceive,
+  t,
+}: {
+  group: BagGroup;
+  delta: number;
+  pulse: boolean;
+  pulseAnim: Animated.Value;
+  showBulkReceive: boolean;
+  onBulkReceive: () => void;
+  t: (k: StringKeyT) => string;
+}) {
+  const scanned = group.scannedBags + delta;
+  const expected = group.expectedBags;
+  const pct = expected ? Math.min(100, Math.round((scanned / expected) * 100)) : 0;
+  const status = statusForGroup({
+    ...group,
+    scannedBags: scanned,
+  });
+  const statusLabel =
+    status === "COMPLETE"
+      ? t("groupStatusComplete")
+      : status === "IN_PROGRESS"
+        ? t("groupStatusInProgress")
+        : t("groupStatusPending");
+  const statusColor =
+    status === "COMPLETE"
+      ? colors.sgs.green
+      : status === "IN_PROGRESS"
+        ? colors.sgs.flashAmber
+        : colors.sgs.textMuted;
+  // Pulse: brief border-color/opacity sweep on the card whose group just
+  // matched a green scan. Driven by a shared 0→1 Animated.Value owned
+  // by the screen so we don't spawn an animation per card.
+  const pulseStyle = pulse
+    ? {
+        opacity: pulseAnim.interpolate({
+          inputRange: [0, 0.5, 1],
+          outputRange: [0.6, 1, 1],
+        }),
+        transform: [
+          {
+            scale: pulseAnim.interpolate({
+              inputRange: [0, 0.5, 1],
+              outputRange: [1.04, 1.02, 1],
+            }),
+          },
+        ],
+      }
+    : null;
+  return (
+    <Animated.View
+      style={[
+        cardStripStyles.card,
+        pulse && { borderColor: colors.sgs.green },
+        pulseStyle,
+      ]}
+    >
+      <View style={cardStripStyles.cardHead}>
+        <Text style={cardStripStyles.cardTitle} numberOfLines={1}>
+          {group.groupNumber}
+        </Text>
+        <View
+          style={[
+            cardStripStyles.statusBadge,
+            { borderColor: statusColor },
+          ]}
+        >
+          <Text style={[cardStripStyles.statusTxt, { color: statusColor }]}>
+            {statusLabel}
+          </Text>
+        </View>
+      </View>
+      <Text style={cardStripStyles.cardCounter}>
+        {scanned}/{expected}
+      </Text>
+      <View style={cardStripStyles.progressTrack}>
+        <View
+          style={[
+            cardStripStyles.progressFill,
+            { width: `${pct}%`, backgroundColor: statusColor },
+          ]}
+        />
+      </View>
+      {showBulkReceive && status === "PENDING" ? (
+        <Pressable
+          onPress={onBulkReceive}
+          style={({ pressed }) => [
+            cardStripStyles.bulkBtn,
+            pressed && { opacity: 0.6 },
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel={t("bulkReceive")}
+        >
+          <Feather name="layers" size={12} color={colors.sgs.textPrimary} />
+          <Text style={cardStripStyles.bulkBtnTxt}>{t("bulkReceive")}</Text>
+        </Pressable>
+      ) : null}
+    </Animated.View>
+  );
+}
+
+const cardStripStyles = StyleSheet.create({
+  strip: {
+    maxHeight: 280,
+    backgroundColor: colors.sgs.surface,
+    borderBottomColor: colors.sgs.border,
+    borderBottomWidth: 1,
+  },
+  grid: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    alignItems: "stretch",
+  },
+  skeletonRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: colors.sgs.surface,
+    borderBottomColor: colors.sgs.border,
+    borderBottomWidth: 1,
+  },
+  skeletonTxt: {
+    color: colors.sgs.textMuted,
+    fontFamily: FONTS.body,
+    fontSize: 13,
+  },
+  card: {
+    flexBasis: "48%",
+    flexGrow: 1,
+    minWidth: 140,
+    backgroundColor: colors.sgs.surfaceElevated,
+    borderColor: colors.sgs.border,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 6,
+  },
+  cardHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 6,
+  },
+  cardTitle: {
+    flex: 1,
+    color: colors.sgs.textPrimary,
+    fontFamily: FONTS.bodyBold,
+    fontSize: 14,
+  },
+  statusBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  statusTxt: {
+    fontFamily: FONTS.bodyMedium,
+    fontSize: 9,
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+  },
+  cardCounter: {
+    color: colors.sgs.textPrimary,
+    fontFamily: FONTS.bodyBold,
+    fontSize: 18,
+  },
+  progressTrack: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.sgs.black,
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%",
+  },
+  bulkBtn: {
+    marginTop: 4,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    backgroundColor: colors.sgs.black,
+    borderColor: colors.sgs.border,
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingVertical: 6,
+  },
+  bulkBtnTxt: {
+    color: colors.sgs.textPrimary,
+    fontFamily: FONTS.bodyMedium,
+    fontSize: 11,
+  },
+});
 
 function ZebraIdleView({
   lastTag,

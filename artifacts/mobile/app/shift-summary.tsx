@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Alert, Platform, Share, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -12,7 +12,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useLocale } from "@/contexts/LocaleContext";
 import { useScanQueue } from "@/contexts/ScanQueueContext";
 import { useSession } from "@/contexts/SessionContext";
-import { sgsApi } from "@/lib/api/sgs";
+import { sgsApi, type BagGroup, type ManifestBag } from "@/lib/api/sgs";
 import {
   getCachedManifest,
   getScannedTags,
@@ -31,26 +31,90 @@ export default function ShiftSummaryScreen() {
   const [expected, setExpected] = useState(0);
   const [exceptionCount, setExceptionCount] = useState(0);
   const [scannedSet, setScannedSet] = useState<Set<string>>(new Set());
-  const [manifestCache, setManifestCache] = useState<
-    Awaited<ReturnType<typeof getCachedManifest>>
-  >(null);
+  const [manifestCache, setManifestCache] = useState<ManifestBag[]>([]);
+  // For flight-only sessions we aggregate across every group on the
+  // flight. We keep the resolved groups list so the report can name a
+  // synthetic "All groups" group for de-duplication purposes.
+  const [allGroups, setAllGroups] = useState<BagGroup[]>([]);
   const [sending, setSending] = useState(false);
+
+  const pinnedGroup = session.session?.group ?? null;
 
   useEffect(() => {
     if (!session.session) return;
+    let alive = true;
     (async () => {
-      const groupId = session.session!.group.id;
-      const tags = await getScannedTags(groupId);
-      const manifest = (await getCachedManifest(groupId)) ?? [];
-      setScanned(tags.size);
-      setExpected(session.session!.group.expectedBags);
-      setExceptionCount(
-        manifest.filter((b) => b.status === "exception").length,
-      );
-      setScannedSet(tags);
-      setManifestCache(manifest);
+      if (pinnedGroup) {
+        const tags = await getScannedTags(pinnedGroup.id);
+        const manifest = (await getCachedManifest(pinnedGroup.id)) ?? [];
+        if (!alive) return;
+        setScanned(tags.size);
+        setExpected(pinnedGroup.expectedBags);
+        setExceptionCount(
+          manifest.filter((b) => b.status === "exception").length,
+        );
+        setScannedSet(tags);
+        setManifestCache(manifest);
+        setAllGroups([pinnedGroup]);
+        return;
+      }
+      // Flight-only mode: resolve groups, then aggregate per-group
+      // scanned tags + manifest exceptions. The returned groups list
+      // also feeds the synthetic-group report below.
+      let groups: BagGroup[] = [];
+      try {
+        groups = await sgsApi.groups(session.session!.flight.id);
+      } catch {
+        groups = [];
+      }
+      // Dedupe across groups by tag key. A bag tag should never legally
+      // appear in two groups, but local caches across multi-shift use
+      // can drift; keying by tag prevents both the UI total and the
+      // report payload from inflating when overlap occurs. UI total
+      // and `scannedSet.size` therefore always agree.
+      let totalExpected = 0;
+      const mergedManifest = new Map<string, ManifestBag>();
+      const mergedTags = new Set<string>();
+      for (const g of groups) {
+        const tags = await getScannedTags(g.id);
+        const manifest = (await getCachedManifest(g.id)) ?? [];
+        totalExpected += g.expectedBags;
+        for (const t of tags) mergedTags.add(t);
+        for (const b of manifest) mergedManifest.set(b.tagNumber, b);
+      }
+      const dedupedManifest = Array.from(mergedManifest.values());
+      const totalExceptions = dedupedManifest.filter(
+        (b) => b.status === "exception",
+      ).length;
+      if (!alive) return;
+      setAllGroups(groups);
+      setScanned(mergedTags.size);
+      setExpected(totalExpected);
+      setExceptionCount(totalExceptions);
+      setScannedSet(mergedTags);
+      setManifestCache(dedupedManifest);
     })();
-  }, [session.session]);
+    return () => {
+      alive = false;
+    };
+  }, [session.session, pinnedGroup]);
+
+  // Synthetic group used for the report payload in flight-only mode so
+  // buildShiftReport (which is per-group) still produces a coherent
+  // snapshot. The label "ALL" doubles as a stable de-dup key on the
+  // server.
+  const reportGroup = useMemo<BagGroup>(() => {
+    if (pinnedGroup) return pinnedGroup;
+    return {
+      id: "ALL",
+      flightId: session.session?.flight.id ?? "ALL",
+      groupNumber: "ALL",
+      hotelName: "",
+      expectedBags: expected,
+      scannedBags: scanned,
+      status: "in_progress",
+    } as unknown as BagGroup;
+  }, [pinnedGroup, expected, scanned]);
 
   if (!session.session) {
     return null;
@@ -76,7 +140,7 @@ export default function ShiftSummaryScreen() {
     try {
       const report = buildShiftReport({
         flight: session.session.flight,
-        group: session.session.group,
+        group: reportGroup,
         startedAt: session.session.startedAt,
         endedAt: new Date().toISOString(),
         manifest: manifestCache ?? [],
@@ -161,7 +225,11 @@ export default function ShiftSummaryScreen() {
     <View style={styles.flex}>
       <ScreenHeader
         title={t("shiftSummary")}
-        subtitle={`${session.session.flight.flightNumber} · ${t("groupLabel")} ${session.session.group.groupNumber}`}
+        subtitle={
+          pinnedGroup
+            ? `${session.session.flight.flightNumber} · ${t("groupLabel")} ${pinnedGroup.groupNumber}`
+            : `${session.session.flight.flightNumber} · ${t("allGroupsLabel")} (${allGroups.length})`
+        }
         onBack={() => router.back()}
       />
       <ScrollView

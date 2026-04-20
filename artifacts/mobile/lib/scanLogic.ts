@@ -20,7 +20,13 @@ export interface ScanDecision {
 
 export function decideScan(args: {
   tagNumber: string;
-  groupId: string;
+  /**
+   * Pinned group id. When undefined, the caller is in flight-only mode
+   * (the scan screen accepts every group on the flight); the wrong-group
+   * check is skipped and the resolved bag's own groupId is returned in
+   * `bag.groupId` for the per-card highlight + counter increment.
+   */
+  groupId?: string;
   manifest: ManifestBag[];
   scannedTags: Set<string>;
 }): ScanDecision {
@@ -79,7 +85,11 @@ export function decideScan(args: {
     };
   }
 
-  if (bag.groupId !== groupId) {
+  // Only enforce wrong-group when the caller pinned a specific group.
+  // Flight-only mode passes `groupId: undefined` and accepts every group
+  // on the flight — the bag's own `groupId` is then used for the
+  // per-card highlight + counter bump.
+  if (groupId !== undefined && bag.groupId !== groupId) {
     return {
       flash: "red",
       title: "Wrong Group",

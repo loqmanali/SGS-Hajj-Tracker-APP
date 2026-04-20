@@ -211,6 +211,17 @@ const en = {
   rapidScanIdle: "Scan a bag tag to begin",
   rapidScanReds: "Red scans this session",
   rapidScanNoFlightHint: "Scans are not associated with a flight.",
+
+  // Flight-only scan flow (group cards grid)
+  switchFlight: "Switch flight",
+  allGroupsLabel: "Groups",
+  groupStatusPending: "Pending",
+  groupStatusInProgress: "In progress",
+  groupStatusComplete: "Complete",
+  noGroupsForFlight: "No groups for this flight.",
+  loadingGroups: "Loading groups…",
+  pickGroup: "Choose a group",
+  pickGroupHint: "Pick the group this no-tag bag belongs to.",
 };
 
 const ar: Dict = {
@@ -402,6 +413,16 @@ const ar: Dict = {
   rapidScanIdle: "امسح بطاقة حقيبة للبدء",
   rapidScanReds: "مسحات حمراء في الجلسة",
   rapidScanNoFlightHint: "المسحات غير مرتبطة برحلة.",
+
+  switchFlight: "تغيير الرحلة",
+  allGroupsLabel: "المجموعات",
+  groupStatusPending: "قيد الانتظار",
+  groupStatusInProgress: "قيد التنفيذ",
+  groupStatusComplete: "مكتمل",
+  noGroupsForFlight: "لا توجد مجموعات لهذه الرحلة.",
+  loadingGroups: "جارِ تحميل المجموعات…",
+  pickGroup: "اختر مجموعة",
+  pickGroupHint: "اختر المجموعة التي تنتمي إليها هذه الحقيبة بدون بطاقة.",
 };
 
 const dictionaries: Record<Locale, Dict> = { en, ar };

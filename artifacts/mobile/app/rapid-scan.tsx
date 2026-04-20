@@ -168,10 +168,14 @@ export default function RapidScanScreen() {
             setTimeout(() => resolve("__timeout__"), FALLBACK_TIMEOUT_MS),
           ),
         ]);
+        // Strict: only rescue when the bags endpoint explicitly flags
+        // the record as a Hajj bag. `isHajjBag` is optional on the
+        // wire; when it's missing or false we keep the original RED
+        // rather than risk amber-flashing a genuinely non-Hajj tag.
         if (
           rescued &&
           rescued !== "__timeout__" &&
-          rescued.isHajjBag !== false
+          rescued.isHajjBag === true
         ) {
           result = {
             status: "amber",

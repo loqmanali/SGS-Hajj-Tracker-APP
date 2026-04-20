@@ -187,6 +187,30 @@ const en = {
   openSettingsAction: "Open Settings",
 
   notInManifestHint: "This bag is not registered in this group.\nUse Exception if the bag is physically present.",
+
+  // Rapid Scan
+  rapidScan: "Rapid Scan",
+  rapidScanSub: "Distraction-free belt scanning",
+  rapidScanCta: "Open Rapid Scan",
+  clearSession: "Clear session",
+  greens: "Greens",
+  ambers: "Ambers",
+  reds: "Reds",
+  lastScan: "Last scan",
+  pickFlight: "Pick a flight",
+  noFlight: "No flight",
+  hotel: "Hotel",
+  address: "Address",
+  pilgrim: "Pilgrim",
+  rapidGreen: "Hajj — Assigned",
+  rapidAmberTitle: "Manifested — Not Assigned",
+  rapidRedUnknown: "Unknown tag",
+  rapidRedNonHajj: "Not a Hajj bag",
+  rapidRedNoNusuk: "No Nusuk match",
+  rapidLookupFailed: "Lookup failed — check connection",
+  rapidScanIdle: "Scan a bag tag to begin",
+  rapidScanReds: "Red scans this session",
+  rapidScanNoFlightHint: "Scans are not associated with a flight.",
 };
 
 const ar: Dict = {
@@ -355,6 +379,29 @@ const ar: Dict = {
   openSettingsAction: "فتح الإعدادات",
 
   notInManifestHint: "هذه الحقيبة غير مسجلة في هذه المجموعة.\nاستخدم الاستثناء إذا كانت الحقيبة موجودة فعلياً.",
+
+  rapidScan: "المسح السريع",
+  rapidScanSub: "مسح متواصل بدون تشتيت",
+  rapidScanCta: "فتح المسح السريع",
+  clearSession: "مسح الجلسة",
+  greens: "أخضر",
+  ambers: "أصفر",
+  reds: "أحمر",
+  lastScan: "آخر مسح",
+  pickFlight: "اختر رحلة",
+  noFlight: "بدون رحلة",
+  hotel: "الفندق",
+  address: "العنوان",
+  pilgrim: "الحاج",
+  rapidGreen: "حج — معيَّن",
+  rapidAmberTitle: "مُدرج — غير معيَّن",
+  rapidRedUnknown: "بطاقة غير معروفة",
+  rapidRedNonHajj: "ليست حقيبة حج",
+  rapidRedNoNusuk: "لا يوجد تطابق نُسُك",
+  rapidLookupFailed: "فشل البحث — تحقق من الاتصال",
+  rapidScanIdle: "امسح بطاقة حقيبة للبدء",
+  rapidScanReds: "مسحات حمراء في الجلسة",
+  rapidScanNoFlightHint: "المسحات غير مرتبطة برحلة.",
 };
 
 const dictionaries: Record<Locale, Dict> = { en, ar };

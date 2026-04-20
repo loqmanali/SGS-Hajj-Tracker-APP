@@ -6,8 +6,9 @@
  * color immediately. The actual scan still goes to the queue for replay.
  */
 
-import type { ManifestBag } from "@/lib/api/sgs";
+import type { HajjCheckResult, ManifestBag } from "@/lib/api/sgs";
 import type { FlashColor } from "@/constants/branding";
+import type { HapticKey } from "@/hooks/useFlashFeedback";
 
 export interface ScanDecision {
   flash: FlashColor;
@@ -239,4 +240,52 @@ export function isIataBagTag(tag: string): boolean {
  */
 export function isAcceptedScanTag(tag: string): boolean {
   return isSgsHajjTag(tag) || isIataBagTag(tag);
+}
+
+/**
+ * Rapid-Scan classification. Folds a HajjCheckResult into the same
+ * `{flash,title,subtitle,hint,hapticKey}` shape `decideScan` produces so
+ * the screen can hand it straight to `useFlashFeedback`. The translator
+ * is passed in so the strings stay localized; pass `t` from `useLocale`.
+ */
+export interface RapidScanDecision {
+  flash: FlashColor;
+  title: string;
+  subtitle?: string;
+  hint?: string;
+  hapticKey: HapticKey;
+}
+
+export function classifyHajjCheck(
+  result: HajjCheckResult,
+  t: (key: string) => string,
+): RapidScanDecision {
+  if (result.status === "green") {
+    return {
+      flash: "green",
+      title: result.accommodationName ?? t("rapidGreen"),
+      subtitle: result.pilgrimName,
+      hint: result.accommodationAddress,
+      hapticKey: "success",
+    };
+  }
+  if (result.status === "amber") {
+    return {
+      flash: "amber",
+      title: t("rapidAmberTitle"),
+      subtitle: result.pilgrimName ?? result.bagTag,
+      hapticKey: "warning",
+    };
+  }
+  // Red: explain what we know.
+  let title = t("rapidRedUnknown");
+  if (result.reason === "non_hajj") title = t("rapidRedNonHajj");
+  else if (result.reason === "no_nusuk") title = t("rapidRedNoNusuk");
+  else if (result.message) title = result.message;
+  return {
+    flash: "red",
+    title,
+    subtitle: result.bagTag,
+    hapticKey: "error",
+  };
 }

@@ -63,6 +63,11 @@ export default function SessionSetupScreen() {
   // where it doesn't apply.
   const role = auth.user?.role ?? "";
   const supportsAssignments = role !== "airport_ops";
+  // Rapid Scan is a high-volume, distraction-free belt-clearing surface for
+  // supervisors and the airport-ops role. Belt agents (`agent`), drivers,
+  // and other roles never see the entry point.
+  const canRapidScan =
+    role === "admin" || role === "duty_manager" || role === "airport_ops";
 
   const [flightsQ, assignmentsQ] = useQueries({
     queries: [
@@ -261,6 +266,32 @@ export default function SessionSetupScreen() {
               { paddingBottom: insets.bottom + 24 },
             ]}
             ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
+            ListHeaderComponent={
+              canRapidScan ? (
+                <Pressable
+                  onPress={() => router.push("/rapid-scan")}
+                  style={({ pressed }) => [
+                    styles.rapidCard,
+                    pressed && styles.cardPressed,
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel={t("rapidScan")}
+                >
+                  <View style={styles.rapidIcon}>
+                    <Feather name="zap" size={20} color={colors.sgs.green} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.rapidTitle}>{t("rapidScan")}</Text>
+                    <Text style={styles.rapidSub}>{t("rapidScanSub")}</Text>
+                  </View>
+                  <Feather
+                    name="chevron-right"
+                    size={20}
+                    color={colors.sgs.textMuted}
+                  />
+                </Pressable>
+              ) : null
+            }
             renderItem={({ item }) => (
               <FlightCard flight={item} onPress={() => setSelectedFlight(item)} />
             )}
@@ -506,6 +537,36 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   cardPressed: { opacity: 0.7 },
+  rapidCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    backgroundColor: colors.sgs.surface,
+    borderColor: colors.sgs.green,
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+  },
+  rapidIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: colors.sgs.surfaceElevated,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  rapidTitle: {
+    color: colors.sgs.textPrimary,
+    fontFamily: FONTS.bodyBold,
+    fontSize: 16,
+  },
+  rapidSub: {
+    color: colors.sgs.textMuted,
+    fontFamily: FONTS.body,
+    fontSize: 12,
+    marginTop: 2,
+  },
   cardRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   cardTitle: {
     fontFamily: FONTS.bodyBold,

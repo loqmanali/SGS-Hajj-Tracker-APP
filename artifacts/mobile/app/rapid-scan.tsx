@@ -130,25 +130,24 @@ export default function RapidScanScreen() {
       if (busy) return;
       lastScan.current = { tag, at: now };
       setBusy(true);
-
-      let result: HajjCheckResult;
       try {
-        result = await sgsApi.hajjCheck(tag);
-      } catch (err) {
-        // Network failure → treat as red but don't burn a count, since
-        // we can't be sure whether the bag is actually unrecognized or
-        // just unreachable. Show the lookup-failed toast via the flash.
-        trigger(
-          {
-            color: "red",
-            title: t("rapidLookupFailed"),
-            subtitle: tag,
-          },
-          "error",
-        );
-        setBusy(false);
-        return;
-      }
+        let result: HajjCheckResult;
+        try {
+          result = await sgsApi.hajjCheck(tag);
+        } catch {
+          // Network failure → treat as red but don't burn a count, since
+          // we can't be sure whether the bag is actually unrecognized or
+          // just unreachable. Show the lookup-failed toast via the flash.
+          trigger(
+            {
+              color: "red",
+              title: t("rapidLookupFailed"),
+              subtitle: tag,
+            },
+            "error",
+          );
+          return;
+        }
 
       const decision = classifyHajjCheck(result, t as (k: string) => string);
       // Rapid Scan dwells the flash for a fixed 1.5s on every outcome —
@@ -204,7 +203,12 @@ export default function RapidScanScreen() {
           })
           .catch(() => undefined);
       }
-      setBusy(false);
+      } finally {
+        // Guarantee the busy flag clears even if `queue.enqueue` throws
+        // unexpectedly — without this, a single network blip would
+        // freeze the screen until remount.
+        setBusy(false);
+      }
     },
     [busy, flight, isZebra, queue, t, trigger],
   );

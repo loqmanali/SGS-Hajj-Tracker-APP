@@ -2,12 +2,11 @@
   "expo": {
     "name": "SGS BagScan",
     "slug": "mobile",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "sgsbagscan",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": true,
     "backgroundColor": "#000000",
     "runtimeVersion": {
       "policy": "appVersion"
@@ -16,7 +15,7 @@
       "enabled": true,
       "fallbackToCacheTimeout": 0,
       "checkAutomatically": "ON_LOAD",
-      "url": "https://u.expo.dev/00000000-0000-0000-0000-000000000000"
+      "url": "https://u.expo.dev/2ad9528a-9c02-4ed0-99dd-340a755d25d5"
     },
     "splash": {
       "image": "./assets/images/icon.png",
@@ -25,14 +24,23 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.semicolon.sgsbagscan",
+      "bundleIdentifier": "app.semicolon.sa.sgsbagscan",
       "infoPlist": {
-        "NSCameraUsageDescription": "SGS BagScan uses the camera to scan luggage tag barcodes."
+        "NSCameraUsageDescription": "SGS BagScan uses the camera to scan luggage tag barcodes.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
       "package": "com.semicolon.sgsbagscan",
-      "permissions": ["CAMERA", "VIBRATE", "FOREGROUND_SERVICE"]
+      "permissions": [
+        "CAMERA",
+        "VIBRATE",
+        "FOREGROUND_SERVICE",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "favicon": "./assets/images/icon.png"
@@ -70,8 +78,10 @@
       "eas": {
         "env": {
           "EXPO_PUBLIC_SGS_API_URL": "https://api-bagtracker-prod.saudiags.com"
-        }
+        },
+        "projectId": "2ad9528a-9c02-4ed0-99dd-340a755d25d5"
       }
-    }
+    },
+    "owner": "loqman"
   }
 }

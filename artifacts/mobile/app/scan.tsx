@@ -4,9 +4,11 @@ import { useFocusEffect, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
+  ToastAndroid,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -22,8 +24,8 @@ import { useLocale } from "@/contexts/LocaleContext";
 import { useScanQueue } from "@/contexts/ScanQueueContext";
 import { useSession } from "@/contexts/SessionContext";
 import { useFlashFeedback } from "@/hooks/useFlashFeedback";
-import { useIsZebraDevice, useZebraScanRaw, useZebraScanner } from "@/hooks/useScanner";
-import { decideScan, normalizeTag } from "@/lib/scanLogic";
+import { useScannerMode, useZebraScanRaw, useZebraScanner } from "@/hooks/useScanner";
+import { decideScan, normalizeTag, parseBtpPdf417 } from "@/lib/scanLogic";
 import {
   getCachedManifest,
   getDebugRawScan,
@@ -34,16 +36,22 @@ import {
 import { Linking } from "react-native";
 
 const DEBOUNCE_MS = 1500;
+const DEBOUNCE_RED_MS = 2000;
 
 export default function ScanScreen() {
   const router = useRouter();
   const auth = useAuth();
   const session = useSession();
   const queue = useScanQueue();
-  const isZebra = useIsZebraDevice();
+  const { effective: scannerSource } = useScannerMode();
+  // Keep `isZebra` as the local boolean used through this screen so the
+  // existing render branches don't churn — it now reflects the *effective*
+  // source (auto-detect + manual override) rather than raw device
+  // detection.
+  const isZebra = scannerSource === "zebra";
   const { flash, trigger } = useFlashFeedback();
   const insets = useSafeAreaInsets();
-  const { t } = useLocale();
+  const { t, isRTL } = useLocale();
 
   const [permission, requestPermission] = useCameraPermissions();
   const [scannedCount, setScannedCount] = useState(0);
@@ -69,7 +77,7 @@ export default function ScanScreen() {
   // so the form is seeded with the tag that actually needs an exception
   // raised against it, not just the most recent successful scan.
   const [lastFailedTag, setLastFailedTag] = useState<string | null>(null);
-  const lastScan = useRef<{ tag: string; at: number } | null>(null);
+  const lastScan = useRef<{ tag: string; at: number; flash?: string } | null>(null);
   const deviceIdRef = useRef<string | null>(null);
 
   // Resolve the stable per-install device id once on mount so every scan
@@ -167,28 +175,48 @@ export default function ScanScreen() {
       const tag = normalizeTag(raw);
       if (!tag) return;
       const now = Date.now();
+      const debounceWindow =
+        lastScan.current?.flash === "red" ? DEBOUNCE_RED_MS : DEBOUNCE_MS;
       if (
         lastScan.current &&
         lastScan.current.tag === tag &&
-        now - lastScan.current.at < DEBOUNCE_MS
+        now - lastScan.current.at < debounceWindow
       ) {
         return;
       }
-      lastScan.current = { tag, at: now };
+      lastScan.current = { tag, at: now, flash: undefined };
 
       const groupId = session.session.group.id;
       const flightId = session.session.flight.id;
       const manifest = (await getCachedManifest(groupId)) ?? [];
       const scannedTags = await getScannedTags(groupId);
 
+
+
       const decision = decideScan({ tagNumber: tag, groupId, manifest, scannedTags });
+
+
+
+      lastScan.current = { tag, at: now, flash: decision.flash };
+
       // When offline, override a green match to yellow to communicate
       // "queued offline — will sync when SGS network returns".
       const offlineQueued = decision.flash === "green" && !queue.online;
       const flashColor = offlineQueued ? "yellow" : decision.flash;
       const title = offlineQueued ? "QUEUED OFFLINE" : decision.title;
+
+      // For NOT IN MANIFEST, show a more descriptive subtitle so the
+      // agent understands this bag is not registered in this group.
+      const isNotInManifest = decision.title === "NOT IN MANIFEST";
+      const subtitle = isNotInManifest
+        ? tag
+        : decision.subtitle;
+      const hint = isNotInManifest
+        ? t("notInManifestHint")
+        : undefined;
+
       trigger(
-        { color: flashColor, title, subtitle: decision.subtitle },
+        { color: flashColor, title, subtitle, hint },
         decision.hapticKey,
       );
       setLastTag(tag);
@@ -197,6 +225,13 @@ export default function ScanScreen() {
       if (decision.flash === "green") {
         await markTagScanned(groupId, tag);
         setScannedCount(scannedTags.size + 1);
+      }
+
+      // Do not queue scans that are already known to be NOT IN MANIFEST
+      // offline — the server will always 404 them, filling the queue
+      // with noise. The agent can still use Exception for these bags.
+      if (decision.title === "NOT IN MANIFEST" && manifest.length > 0) {
+        return;
       }
 
       // Always queue the scan for server-side reconciliation (server is
@@ -243,8 +278,18 @@ export default function ScanScreen() {
   return (
     <View style={styles.flex}>
       <ScreenHeader
-        title={`${session.session.flight.flightNumber} · ${t("groupLabel")} ${session.session.group.groupNumber}`}
-        subtitle={`${scannedCount}/${expected} ${t("bags")} · ${pct}%`}
+        title={
+          // isRTL
+          //   ? `${t("groupLabel")} ${session.session.group.groupNumber} · ${session.session.flight.flightNumber}`
+          //   : 
+            // `${session.session.flight.flightNumber} · ${t("groupLabel")} ${session.session.group.groupNumber}`
+            `${session.session.flight.flightNumber} · ${session.session.group.groupNumber}`
+        }
+        subtitle={
+          isRTL
+            ? `${pct}% · ${scannedCount}/${expected} ${t("bags")}`
+            : `${scannedCount}/${expected} ${t("bags")} · ${pct}%`
+        }
         right={
           <View style={styles.headerRight}>
             <StatusPill
@@ -272,7 +317,7 @@ export default function ScanScreen() {
       {queue.deadLetterTotal > 0 ? (
         <View style={styles.dlBanner}>
           <Feather name="alert-circle" size={16} color={colors.sgs.black} />
-          <Text style={styles.dlText}>
+          <Text style={[styles.dlText, isRTL && { writingDirection: "rtl" }]}>
             {queue.deadLetterTotal} {t("itemsFailed")}
           </Text>
           <Pressable onPress={queue.retryDeadLetter} style={styles.dlBtn}>
@@ -291,7 +336,7 @@ export default function ScanScreen() {
         // already reflects scan-queue depth.
         <View style={styles.opsBanner}>
           <Feather name="upload-cloud" size={14} color={colors.sgs.textMuted} />
-          <Text style={styles.opsBannerText}>
+          <Text style={[styles.opsBannerText, isRTL && { writingDirection: "rtl" }]}>
             {queue.pendingExceptions > 0
               ? `${queue.pendingExceptions} ${t("exceptionsQueued")}`
               : ""}
@@ -307,8 +352,8 @@ export default function ScanScreen() {
         <View style={styles.noScanBanner}>
           <Feather name="alert-triangle" size={16} color={colors.sgs.black} />
           <View style={styles.noScanText}>
-            <Text style={styles.noScanTitle}>{t("noScansYet")}</Text>
-            <Text style={styles.noScanBody}>{t("noScansYetBody")}</Text>
+            <Text style={[styles.noScanTitle, isRTL && { writingDirection: "rtl" }]}>{t("noScansYet")}</Text>
+            <Text style={[styles.noScanBody, isRTL && { writingDirection: "rtl" }]}>{t("noScansYetBody")}</Text>
           </View>
           <Pressable
             onPress={() => router.push("/settings")}
@@ -351,6 +396,22 @@ export default function ScanScreen() {
                   if (rawBannerTimer.current) clearTimeout(rawBannerTimer.current);
                   rawBannerTimer.current = setTimeout(() => setRawBanner(null), 2000);
                 }
+                // For PDF417 camera scans, parse BTP fields and surface them
+                // as a native toast so the agent can confirm every field was
+                // read correctly before the scan enters the queue.
+                if (r.type === "pdf417" && Platform.OS === "android") {
+                  const btp = parseBtpPdf417(r.data);
+                  if (btp) {
+                    const lines = ["PDF417 decoded:"];
+                    lines.push(`Tag:     ${btp.tagNumber}`);
+                    if (btp.pilgrimName) lines.push(`Pilgrim: ${btp.pilgrimName}`);
+                    if (btp.flight)      lines.push(`Flight:  ${btp.flight}`);
+                    if (btp.station)     lines.push(`Station: ${btp.station}`);
+                    if (btp.pnr)         lines.push(`PNR:     ${btp.pnr}`);
+                    if (btp.bagSequence) lines.push(`BN:      ${btp.bagSequence}`);
+                    ToastAndroid.show(lines.join("\n"), ToastAndroid.SHORT);
+                  }
+                }
                 handleScan(r.data);
               }}
             />
@@ -365,7 +426,9 @@ export default function ScanScreen() {
         {!isZebra && permission?.granted ? (
           <View pointerEvents="none" style={styles.reticle}>
             <View style={styles.reticleBox} />
-            <Text style={styles.reticleHint}>{t("alignTag")}</Text>
+            <Text style={[styles.reticleHint, isRTL && { writingDirection: "rtl" }]}>
+              {t("alignTag")}
+            </Text>
           </View>
         ) : null}
 
@@ -374,6 +437,7 @@ export default function ScanScreen() {
             color={flash.color}
             title={flash.title}
             subtitle={flash.subtitle}
+            hint={flash.hint}
           />
         ) : null}
 
@@ -434,8 +498,10 @@ export default function ScanScreen() {
           accessibilityRole="button"
           accessibilityLabel="Open settings and version info"
         >
-          <Text style={styles.footerAgent}>
-            {auth.user?.name} · {isZebra ? t("zebraMode") : t("cameraMode")}
+          <Text style={[styles.footerAgent, isRTL && { writingDirection: "rtl" }]}>
+            {isRTL
+              ? `${isZebra ? t("zebraMode") : t("cameraMode")} · ${auth.user?.name}`
+              : `${auth.user?.name} · ${isZebra ? t("zebraMode") : t("cameraMode")}`}
           </Text>
         </Pressable>
       </View>
@@ -543,7 +609,7 @@ function FooterButton({
       ]}
     >
       <Feather name={icon} size={18} color={colors.sgs.textPrimary} />
-      <Text style={styles.fbtnTxt}>{label}</Text>
+      <Text style={styles.fbtnTxt} numberOfLines={2} adjustsFontSizeToFit minimumFontScale={0.75}>{label}</Text>
     </Pressable>
   );
 }
@@ -551,10 +617,10 @@ function FooterButton({
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: colors.sgs.black },
   body: { flex: 1, position: "relative", overflow: "hidden" },
-  headerRight: { flexDirection: "row", alignItems: "center", gap: 10 },
+  headerRight: { flexDirection: "row", alignItems: "center", gap: 6 },
   headerSettingsBtn: {
-    width: 32,
-    height: 32,
+    width: 28,
+    height: 28,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -783,7 +849,8 @@ const styles = StyleSheet.create({
     color: colors.sgs.textPrimary,
     fontFamily: FONTS.bodyMedium,
     fontSize: 12,
-    letterSpacing: 0.4,
+    letterSpacing: 0.2,
+    textAlign: "center",
   },
   footerAgent: {
     color: colors.sgs.textDim,

@@ -1,26 +1,24 @@
 {
   "cli": {
-    "version": ">= 5.0.0",
+    "version": ">= 18.7.0",
     "appVersionSource": "remote"
   },
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal",
-      "android": { "buildType": "apk" },
-      "env": {
-        "EXPO_PUBLIC_SGS_API_URL": "https://api-bagtracker-prod.saudiags.com"
-      }
+      "distribution": "internal"
     },
     "preview": {
       "distribution": "internal",
-      "android": { "buildType": "apk" },
+      "android": {
+        "buildType": "apk"
+      },
       "env": {
         "EXPO_PUBLIC_SGS_API_URL": "https://api-bagtracker-prod.saudiags.com"
       }
     },
     "production": {
-      "android": { "buildType": "app-bundle" },
+      "autoIncrement": true,
       "env": {
         "EXPO_PUBLIC_SGS_API_URL": "https://api-bagtracker-prod.saudiags.com"
       }

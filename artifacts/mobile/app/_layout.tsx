@@ -68,7 +68,21 @@ function RootStack() {
     ) {
       router.replace("/session-setup");
     }
-  }, [auth.ready, auth.token, session.ready, session.session, segments, router]);
+    // Rapid Scan is restricted to supervisor/ops roles. The session-setup
+    // entry tile is already role-gated, but route-level enforcement is
+    // required so a deep-link or remembered URL from a non-eligible
+    // account (e.g. a belt agent) can't bypass the UI gate.
+    if (auth.token && top === "rapid-scan") {
+      const role = auth.user?.role ?? "";
+      const allowed =
+        role === "admin" ||
+        role === "duty_manager" ||
+        role === "airport_ops";
+      if (!allowed) {
+        router.replace(session.session ? "/scan" : "/session-setup");
+      }
+    }
+  }, [auth.ready, auth.token, auth.user, session.ready, session.session, segments, router]);
 
   const navKey = Platform.OS === "web" ? locale : `${locale}-${fontEpoch}`;
 

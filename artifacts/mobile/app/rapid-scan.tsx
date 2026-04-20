@@ -219,7 +219,14 @@ export default function RapidScanScreen() {
     }, []),
   );
 
-  if (!auth.user) return null;
+  // Defense in depth — the route guard in `_layout.tsx` already blocks
+  // ineligible roles, but the screen also short-circuits so a stale
+  // render between guard and redirect can't leak the camera or fire a
+  // hajj-check on behalf of a non-supervisor.
+  const role = auth.user?.role ?? "";
+  const canRapidScan =
+    role === "admin" || role === "duty_manager" || role === "airport_ops";
+  if (!auth.user || !canRapidScan) return null;
 
   return (
     <View style={styles.flex}>

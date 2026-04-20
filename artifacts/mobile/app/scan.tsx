@@ -345,7 +345,8 @@ export default function ScanScreen() {
       // group from the bag record at sync time.
       await queue.enqueue({
         tagNumber: tag,
-        groupId: matchedGroupId ?? "",
+        // Omit when unmatched — server resolves the group at sync time.
+        groupId: matchedGroupId ?? undefined,
         flightId: sFlightId,
         scannedAt: new Date(now).toISOString(),
         source: isZebra ? "zebra" : "camera",

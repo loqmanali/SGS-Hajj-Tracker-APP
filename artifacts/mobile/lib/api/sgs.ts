@@ -268,7 +268,13 @@ export interface ManifestBag {
 
 export interface ScanRequest {
   tagNumber: string;
-  groupId: string;
+  /**
+   * Optional in the flight-only flow: when the tag isn't in any locally
+   * cached manifest we don't know which group it belongs to until the
+   * server resolves it. Omit (or pass undefined) rather than sending an
+   * empty-string sentinel.
+   */
+  groupId?: string;
   flightId: string;
   scannedAt: string; // ISO
   source: "zebra" | "camera" | "manual";

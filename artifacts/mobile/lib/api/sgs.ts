@@ -549,12 +549,27 @@ function uuidv4(): string {
 
 // ---------- Rapid-Scan / Hajj-check shapes ----------
 //
-// The live `/api/bags/hajj-check` endpoint returns a discriminator plus a
-// scattering of optional fields. Different builds have shipped slightly
-// different shapes (matched/hasAccommodation flags vs explicit status), so
-// the wire type is intentionally permissive and `normalizeHajjCheck` does
-// the folding.
+// The live `/api/bags/hajj-check` endpoint has shipped THREE distinct
+// payload shapes over time. The wire type stays intentionally
+// permissive and `normalizeHajjCheck` folds whichever shape arrived
+// down to the single client-facing `HajjCheckResult`:
+//
+//   1. Original  — `{ status, bagTag, pilgrimName, accommodationName, ... }`
+//   2. Interim   — `{ matched, hasAccommodation, bagTag, pilgrimName, ... }`
+//   3. Current (Apr 2026, verified live) — nests bag/pilgrim under
+//      sub-objects and replaces the status flags with `isHajj` +
+//      `resultCode` + `canCollectFromBelt`. Top-level
+//      `accommodationName` / `accommodationAddress` / `companyName` /
+//      `city` are real fields on this shape, so we keep reading those
+//      at the top level.
+//
+// All three shapes are accepted simultaneously so a backend rollback
+// (or a partial rollout) doesn't break the field. The new shape's
+// nested objects are typed inline rather than imported from
+// `ServerBag` to keep the surface defensive — we only read the few
+// fields we actually need and tolerate everything else being missing.
 export type RawHajjCheck = {
+  // ---- shape 1 + 2 ----
   status?: string;
   result?: string;
   matched?: boolean;
@@ -563,6 +578,25 @@ export type RawHajjCheck = {
   tag?: string;
   pilgrimName?: string | null;
   passengerName?: string | null;
+  // ---- shape 3 (current) ----
+  isHajj?: boolean | null;
+  resultCode?: string | null;
+  reasonCode?: string | null;
+  canCollectFromBelt?: boolean | null;
+  bag?: {
+    bagTag?: string | null;
+    isHajjBag?: boolean | null;
+    flightId?: string | null;
+    flightGroupId?: string | null;
+    currentStatus?: string | null;
+  } | null;
+  pilgrim?: {
+    name?: string | null;
+    nusukType?: string | null;
+    nationality?: string | null;
+    accommodationId?: string | null;
+  } | null;
+  // ---- common to all shapes ----
   accommodationName?: string | null;
   hotelName?: string | null;
   accommodationAddress?: string | null;
@@ -603,22 +637,99 @@ function normalizeHajjCheck(
   scannedTag: string,
   raw: RawHajjCheck,
 ): HajjCheckResult {
-  const bagTag = String(raw.bagTag ?? raw.tag ?? scannedTag);
-  const pilgrimName = cleanField(raw.pilgrimName ?? raw.passengerName);
+  // Field extraction — read each piece of data from wherever the
+  // server happened to put it. Top-level legacy fields win when
+  // present (so a backend rollback to shape 1/2 still works); only
+  // fall back to the new nested locations when the legacy field is
+  // missing. This makes the adapter rollout-safe in either direction.
+  const bagTag = String(
+    raw.bagTag ?? raw.tag ?? raw.bag?.bagTag ?? scannedTag,
+  );
+  const pilgrimName = cleanField(
+    raw.pilgrimName ?? raw.passengerName ?? raw.pilgrim?.name,
+  );
   const accommodationName = cleanField(raw.accommodationName ?? raw.hotelName);
   const accommodationAddress = cleanField(
     raw.accommodationAddress ?? raw.hotelAddress,
   );
   const companyName = cleanField(raw.companyName);
   const city = cleanField(raw.city);
-  const reason = raw.reason ?? raw.message;
+  // `resultCode` / `reasonCode` are the new shape's machine-readable
+  // hints for *why* the server reached its verdict (e.g. "non_hajj",
+  // "unknown_tag", "different_flight"). Surface them as `reason` so
+  // `classifyHajjCheck` can pick localized titles off them just like
+  // it does for the legacy reason values, and so logRedScan captures
+  // the real code rather than a generic "unknown_tag" string.
+  const resultCode = cleanField(raw.resultCode ?? raw.reasonCode);
+  const reason = raw.reason ?? resultCode ?? raw.message;
+
+  // Status derivation — a layered set of rules so older payloads keep
+  // working and the new payload classifies correctly:
+  //
+  //   a) Highest priority: an explicit `status` / `result` field
+  //      ("green" | "amber" | "red"). Original shape #1.
+  //   b) `matched === false` from shape #2 → red.
+  //   c) New shape #3 signals — `canCollectFromBelt` + accommodation +
+  //      `isHajj`/nusukType. Derive the status the way the supervisor
+  //      reads the screen: if the server says the bag can be
+  //      collected, it's at minimum AMBER (Hajj manifest match without
+  //      hotel) or GREEN (with hotel). If the server explicitly says
+  //      not Hajj and we have nothing else to go on, it's RED.
+  //   d) Final fallback: the original shape #2 derivation off
+  //      hasAccommodation / accommodationName.
   const explicit = (raw.status ?? raw.result ?? "").toLowerCase();
   let status: HajjCheckResult["status"];
   if (explicit === "green" || explicit === "amber" || explicit === "red") {
     status = explicit as HajjCheckResult["status"];
   } else if (raw.matched === false) {
     status = "red";
+  } else if (
+    // New shape signal: server told us whether the bag is collectable.
+    typeof raw.canCollectFromBelt === "boolean" ||
+    typeof raw.isHajj === "boolean" ||
+    raw.bag != null ||
+    raw.pilgrim != null
+  ) {
+    // We're definitely on shape #3.
+    const nusukIsHajj =
+      typeof raw.pilgrim?.nusukType === "string" &&
+      raw.pilgrim.nusukType.toUpperCase() === "HAJJ";
+    // Trust `isHajj` when the server set it true. When it's set false
+    // BUT the pilgrim's nusukType says HAJJ (a known backend
+    // inconsistency reported via task-58 backend asks), prefer the
+    // pilgrim signal — refusing a bag with a real Hajj nusuk record
+    // would block legitimate collections at the belt. When `isHajj`
+    // is missing entirely, fall back to nusukType / accommodation
+    // presence as evidence the bag is on the manifest at all.
+    const treatAsHajj =
+      raw.isHajj === true ||
+      nusukIsHajj ||
+      (raw.isHajj == null && (!!accommodationName || !!pilgrimName));
+    // `resultCode` is checked as a tiebreaker. Codes that explicitly
+    // say "this isn't a Hajj bag" or "we couldn't find the tag" force
+    // red even if other signals look ambiguous; a future
+    // accommodation-related code can extend this list once the
+    // backend documents the full vocabulary (tracked in task-58 asks).
+    const code = (resultCode ?? "").toLowerCase();
+    const codeForcesRed =
+      code === "non_hajj" ||
+      code === "unknown_tag" ||
+      code === "no_nusuk" ||
+      code === "not_hajj";
+    if (codeForcesRed) {
+      status = "red";
+    } else if (raw.canCollectFromBelt === false && !treatAsHajj) {
+      status = "red";
+    } else if (!treatAsHajj) {
+      // Server says not Hajj and there's no nusuk evidence → red.
+      status = "red";
+    } else if (accommodationName) {
+      status = "green";
+    } else {
+      status = "amber";
+    }
   } else if (raw.hasAccommodation === false || !accommodationName) {
+    // Original shape #2 derivation.
     status = raw.matched === true || pilgrimName ? "amber" : "red";
   } else {
     status = "green";
@@ -634,6 +745,54 @@ function normalizeHajjCheck(
     reason,
     message: raw.message,
   };
+}
+
+/**
+ * Race a `hajjCheck` lookup for `tagNumber` against a short timeout
+ * and return the cached `ManifestBag` enriched with `companyName` /
+ * `city` from the live response when available. Used by Rapid Scan
+ * to close the gap where `/api/bags?groupId=…` doesn't surface those
+ * two fields but `/api/bags/hajj-check` does — without a backend
+ * change, the cached green/amber flash would otherwise miss them.
+ *
+ * Returns the cached bag unmodified when:
+ *   - `online` is false (no point trying);
+ *   - both fields are already present on the cache (zero-latency path);
+ *   - the lookup times out, throws, or comes back red/unknown.
+ *
+ * Cached fields always win when present — the live lookup only fills
+ * in what's missing, so a manually-corrected cached value can't be
+ * stomped by stale server data.
+ */
+export async function enrichCachedBagWithHajjCheck(
+  tagNumber: string,
+  cached: ManifestBag,
+  opts: { online: boolean; timeoutMs?: number },
+): Promise<ManifestBag> {
+  if (!opts.online) return cached;
+  if (cached.companyName && cached.city) return cached;
+  const timeoutMs = opts.timeoutMs ?? 700;
+  try {
+    const raced = await Promise.race<HajjCheckResult | "__timeout__">([
+      sgsApi.hajjCheck(tagNumber),
+      new Promise<"__timeout__">((resolve) =>
+        setTimeout(() => resolve("__timeout__"), timeoutMs),
+      ),
+    ]);
+    if (raced === "__timeout__") return cached;
+    if (raced.status === "red") return cached;
+    // Use `||` rather than `??` so that an empty-string cached value
+    // (which is what `normalizeBag` produces via `cleanField` when the
+    // /api/bags response omits the field) gives way to the live value.
+    // A non-empty cached value still wins, preserving any local edit.
+    return {
+      ...cached,
+      companyName: cached.companyName || raced.companyName,
+      city: cached.city || raced.city,
+    };
+  } catch {
+    return cached;
+  }
 }
 
 export const sgsApi = {

@@ -140,13 +140,9 @@ export default function RapidScanScreen() {
           await cacheManifest(g.id, fresh);
           return fresh;
         } catch (err) {
-          // Fall back to disk cache so we can still scan offline. If
-          // there is no cached manifest for this group, propagate the
-          // failure so the screen drops into its error/retry state
-          // instead of silently classifying with a partial manifest
-          // (which would push every tag in this group through the
-          // /hajj-check fallback — defeating the purpose of the local
-          // pre-fetch on weak Wi-Fi).
+          // Offline fallback. Rethrow if the cache is also empty so
+          // the screen surfaces a retry instead of running with a
+          // partial manifest.
           const cached = await getCachedManifest(g.id);
           if (cached) return cached;
           throw err;
@@ -174,12 +170,9 @@ export default function RapidScanScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [manifestQs.map((q) => q.dataUpdatedAt).join("|")]);
 
-  // groupId → accommodationName (for green-result hint rendering). We
-  // intentionally use ONLY the explicit accommodation field — not the
-  // `groupNumber` display fallback, which is always populated by the
-  // normalizer (id slice, terminal code, etc.). Treating that fallback
-  // as "has accommodation" would make every cached Hajj bag flash
-  // green and the amber bucket would never fire.
+  // groupId → accommodationName. Uses ONLY the explicit field, never
+  // the `groupNumber` display fallback — otherwise the amber bucket
+  // (Hajj bag with missing accommodation) would never fire.
   const groupAccommodation = useMemo(() => {
     const out = new Map<string, string | undefined>();
     for (const g of groups) {
@@ -188,20 +181,15 @@ export default function RapidScanScreen() {
     return out;
   }, [groups]);
 
-  // Readiness/error guards derived from query state only. Avoiding
-  // vacuous-truth pitfalls of `manifestQs.every(...)` on empty arrays
-  // (which would otherwise mark a flight with zero groups as both
-  // "errored" and "ready"). A flight with zero bags is a valid state —
-  // the operator just gets the idle scan surface with a 0-bag count.
+  // Readiness/error guards derived from query state. A flight with
+  // zero groups is valid — operator just sees the idle surface.
   const manifestLoading =
     !!flightId &&
     (groupsQ.isLoading ||
       groupsQ.isFetching ||
       manifestQs.some((q) => q.isLoading || q.isFetching));
-  // Any failed manifest query is a hard failure now: queryFn falls back
-  // to the disk cache and only rethrows if neither network nor cache
-  // produced data. Treating that as `error` lets the screen surface a
-  // retry CTA instead of running with a partial manifest.
+  // Any failed manifest query is a hard failure (queryFn already
+  // tried the disk cache).
   const manifestError =
     !!flightId &&
     (groupsQ.isError || manifestQs.some((q) => q.isError));
@@ -392,11 +380,9 @@ export default function RapidScanScreen() {
         setCounts((c) => ({ ...c, [result.status]: c[result.status] + 1 }));
 
         if (result.status === "green" || result.status === "amber") {
-          // Tag wasn't in our cached manifest, so we don't know the
-          // groupId locally. Omit it — `submitScan` translates an
-          // absent groupId to `null` on the wire, which lets the
-          // server resolve the correct group from the bag tag itself
-          // rather than coercing flight.id into a wrong-group id.
+          // Tag wasn't cached locally, so groupId is unknown. Omit it
+          // and let the server resolve from the bag tag rather than
+          // misattributing to flight.id.
           await queue.enqueue({
             tagNumber: result.bagTag,
             flightId: flight.id,
@@ -431,10 +417,7 @@ export default function RapidScanScreen() {
   );
 
   // Only subscribe to the Zebra trigger when a flight + manifest are
-  // ready — the empty state shouldn't accept scans. `enabled: false`
-  // skips the DeviceEventEmitter listener registration entirely so the
-  // hardware trigger genuinely does nothing until the manifest is
-  // resolved.
+  // ready — the empty state shouldn't accept scans.
   useZebraScanner(handleScan, { enabled: manifestReady });
 
   const [cameraActive, setCameraActive] = useState(true);
@@ -527,10 +510,6 @@ export default function RapidScanScreen() {
         ) : manifestError ? (
           <ManifestErrorView
             onRetry={() => {
-              // Refetch groups AND every manifest query — a failed
-              // groups query leaves the manifest array empty, but a
-              // groups-success-with-failed-manifest case needs the
-              // manifest queries themselves to be re-driven.
               groupsQ.refetch();
               manifestQs.forEach((q) => {
                 if (q.isError) q.refetch();
@@ -629,13 +608,6 @@ export default function RapidScanScreen() {
       </Modal>
     </View>
   );
-}
-
-// Stable no-op (kept exported-shape stable; currently unused now that
-// useZebraScanner accepts an `enabled` flag).
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function noopScanHandler() {
-  /* gated until a flight is selected */
 }
 
 function CountTile({

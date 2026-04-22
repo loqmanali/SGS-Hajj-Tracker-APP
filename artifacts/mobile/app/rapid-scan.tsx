@@ -139,9 +139,17 @@ export default function RapidScanScreen() {
           const fresh = await sgsApi.manifest(g.id);
           await cacheManifest(g.id, fresh);
           return fresh;
-        } catch {
+        } catch (err) {
+          // Fall back to disk cache so we can still scan offline. If
+          // there is no cached manifest for this group, propagate the
+          // failure so the screen drops into its error/retry state
+          // instead of silently classifying with a partial manifest
+          // (which would push every tag in this group through the
+          // /hajj-check fallback — defeating the purpose of the local
+          // pre-fetch on weak Wi-Fi).
           const cached = await getCachedManifest(g.id);
-          return cached ?? [];
+          if (cached) return cached;
+          throw err;
         }
       },
       enabled: !!flightId,
@@ -190,10 +198,13 @@ export default function RapidScanScreen() {
     (groupsQ.isLoading ||
       groupsQ.isFetching ||
       manifestQs.some((q) => q.isLoading || q.isFetching));
+  // Any failed manifest query is a hard failure now: queryFn falls back
+  // to the disk cache and only rethrows if neither network nor cache
+  // produced data. Treating that as `error` lets the screen surface a
+  // retry CTA instead of running with a partial manifest.
   const manifestError =
     !!flightId &&
-    (groupsQ.isError ||
-      (groups.length > 0 && manifestQs.every((q) => q.isError)));
+    (groupsQ.isError || manifestQs.some((q) => q.isError));
   const manifestReady =
     !!flightId && groupsQ.isSuccess && !manifestLoading && !manifestError;
 
@@ -420,8 +431,11 @@ export default function RapidScanScreen() {
   );
 
   // Only subscribe to the Zebra trigger when a flight + manifest are
-  // ready — the empty state shouldn't accept scans.
-  useZebraScanner(manifestReady ? handleScan : noopScanHandler);
+  // ready — the empty state shouldn't accept scans. `enabled: false`
+  // skips the DeviceEventEmitter listener registration entirely so the
+  // hardware trigger genuinely does nothing until the manifest is
+  // resolved.
+  useZebraScanner(handleScan, { enabled: manifestReady });
 
   const [cameraActive, setCameraActive] = useState(true);
   useFocusEffect(
@@ -511,7 +525,18 @@ export default function RapidScanScreen() {
         ) : manifestLoading ? (
           <ManifestLoadingView />
         ) : manifestError ? (
-          <ManifestErrorView onRetry={() => groupsQ.refetch()} />
+          <ManifestErrorView
+            onRetry={() => {
+              // Refetch groups AND every manifest query — a failed
+              // groups query leaves the manifest array empty, but a
+              // groups-success-with-failed-manifest case needs the
+              // manifest queries themselves to be re-driven.
+              groupsQ.refetch();
+              manifestQs.forEach((q) => {
+                if (q.isError) q.refetch();
+              });
+            }}
+          />
         ) : !manifestReady ? null : isZebra ? (
           <ZebraIdleView totalManifestSize={totalManifestSize} />
         ) : permission?.granted ? (
@@ -606,8 +631,9 @@ export default function RapidScanScreen() {
   );
 }
 
-// Stable no-op so the Zebra hook doesn't re-subscribe on every render
-// when the flight isn't pinned.
+// Stable no-op (kept exported-shape stable; currently unused now that
+// useZebraScanner accepts an `enabled` flag).
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function noopScanHandler() {
   /* gated until a flight is selected */
 }

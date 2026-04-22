@@ -670,10 +670,14 @@ export async function enrichCachedBagWithHajjCheck(
     ]);
     if (raced === "__timeout__") return cached;
     if (raced.status === "red") return cached;
+    // Use `||` rather than `??` so that an empty-string cached value
+    // (which is what `normalizeBag` produces via `cleanField` when the
+    // /api/bags response omits the field) gives way to the live value.
+    // A non-empty cached value still wins, preserving any local edit.
     return {
       ...cached,
-      companyName: cached.companyName ?? raced.companyName,
-      city: cached.city ?? raced.city,
+      companyName: cached.companyName || raced.companyName,
+      city: cached.city || raced.city,
     };
   } catch {
     return cached;

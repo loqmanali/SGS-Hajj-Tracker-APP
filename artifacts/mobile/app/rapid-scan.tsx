@@ -48,6 +48,40 @@ import { classifyHajjCheck, normalizeTag } from "@/lib/scanLogic";
 
 const DEBOUNCE_MS = 1500;
 
+// Picker-row helpers — kept inline (small, used in one place). Mirror
+// the formatting logic on the home flights list so the agent sees the
+// same airline chip + flight label everywhere.
+function pickerExtractAirlineCode(flightNumber: string): string {
+  if (!flightNumber) return "";
+  const m = /^([A-Z]{1,3})\s*\d/i.exec(flightNumber.trim());
+  return m ? m[1].toUpperCase() : "";
+}
+function pickerFormatFlightLabel(flightNumber: string): string {
+  if (!flightNumber) return "";
+  const m = /^([A-Z]{1,3})\s*(\d.*)$/i.exec(flightNumber.trim());
+  return m ? `${m[1].toUpperCase()} ${m[2]}` : flightNumber;
+}
+// Date format for picker rows: "Wed 22 Apr · 9:30 PM" — we want both
+// the date and the time visible so the agent never picks the wrong
+// day's flight when the same flight number runs daily.
+function pickerFormatFlightWhen(iso: string, locale: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const lang = locale === "ar" ? "ar" : "en-US";
+  const date = d.toLocaleDateString(lang, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  });
+  const time = d.toLocaleTimeString(lang, {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+  return `${date} · ${time}`;
+}
+
 /** Same logic as scan.tsx's formatCachedAt — kept local to avoid forcing
  * a shared util just for two callsites. Renders a same-day timestamp as
  * HH:MM and prior-day timestamps as relative ("Xh ago"). */
@@ -92,7 +126,7 @@ export default function RapidScanScreen() {
   const { effective: scannerSource } = useScannerMode();
   const isZebra = scannerSource === "zebra";
   const insets = useSafeAreaInsets();
-  const { t, isRTL } = useLocale();
+  const { t, isRTL, locale } = useLocale();
   const { flash, trigger, clearFlash } = useFlashFeedback();
 
   const [permission, requestPermission] = useCameraPermissions();
@@ -717,18 +751,39 @@ export default function RapidScanScreen() {
                   <View style={{ height: 1, backgroundColor: colors.sgs.border }} />
                 )}
                 style={{ maxHeight: 360 }}
-                renderItem={({ item }) => (
-                  <Pressable
-                    onPress={() => onPickFlight(item)}
-                    style={({ pressed }) => [
-                      styles.flightRow,
-                      pressed && { backgroundColor: colors.sgs.surfaceElevated },
-                    ]}
-                  >
-                    <Text style={styles.flightRowTitle}>{item.flightNumber}</Text>
-                    <Text style={styles.flightRowSub}>{item.destination}</Text>
-                  </Pressable>
-                )}
+                renderItem={({ item }) => {
+                  const airline = pickerExtractAirlineCode(item.flightNumber);
+                  const when = pickerFormatFlightWhen(item.departureTime, locale);
+                  // Compose the meta line so we don't render a stray
+                  // separator when one side is empty (legacy manifests
+                  // sometimes ship without a destination string).
+                  const meta = [item.destination, when]
+                    .filter((s) => s && s.length > 0)
+                    .join(" · ");
+                  return (
+                    <Pressable
+                      onPress={() => onPickFlight(item)}
+                      style={({ pressed }) => [
+                        styles.flightRow,
+                        pressed && { backgroundColor: colors.sgs.surfaceElevated },
+                      ]}
+                    >
+                      <View style={styles.flightRowTitleWrap}>
+                        {airline ? (
+                          <View style={styles.airlineChip}>
+                            <Text style={styles.airlineChipTxt}>{airline}</Text>
+                          </View>
+                        ) : null}
+                        <Text style={styles.flightRowTitle}>
+                          {pickerFormatFlightLabel(item.flightNumber)}
+                        </Text>
+                      </View>
+                      {meta ? (
+                        <Text style={styles.flightRowSub}>{meta}</Text>
+                      ) : null}
+                    </Pressable>
+                  );
+                }}
               />
             )}
             <View style={{ height: 12 }} />
@@ -1062,6 +1117,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 12,
   },
+  flightRowTitleWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
   flightRowTitle: {
     color: colors.sgs.textPrimary,
     fontFamily: FONTS.bodyMedium,
@@ -1072,5 +1132,19 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.body,
     fontSize: 12,
     marginTop: 2,
+  },
+  airlineChip: {
+    backgroundColor: colors.sgs.surfaceElevated,
+    borderColor: colors.sgs.green,
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  airlineChipTxt: {
+    fontFamily: FONTS.bodyBold,
+    fontSize: 12,
+    color: colors.sgs.green,
+    letterSpacing: 0.5,
   },
 });

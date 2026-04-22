@@ -256,6 +256,15 @@ function formatFlightLabel(flightNumber: string): string {
   return flightNumber;
 }
 
+// Pull just the IATA airline prefix (e.g. "XY", "TK") out of a flight
+// number for use as a standalone chip. Returns "" when the number
+// doesn't start with letters so callers can hide the chip cleanly.
+function extractAirlineCode(flightNumber: string): string {
+  if (!flightNumber) return "";
+  const m = /^([A-Z]{1,3})\s*\d/i.exec(flightNumber.trim());
+  return m ? m[1].toUpperCase() : "";
+}
+
 // Date format: "Wed 22 Apr · 9:30 PM". Uses the active app locale so
 // Arabic mode renders the weekday/month in Arabic without further work.
 function formatFlightWhen(iso: string, locale: string): string {
@@ -290,7 +299,16 @@ function FlightCard({
       style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
     >
       <View style={styles.cardRow}>
-        <Text style={styles.cardTitle}>{formatFlightLabel(flight.flightNumber)}</Text>
+        <View style={styles.titleRow}>
+          {extractAirlineCode(flight.flightNumber) ? (
+            <View style={styles.airlineChip}>
+              <Text style={styles.airlineChipTxt}>
+                {extractAirlineCode(flight.flightNumber)}
+              </Text>
+            </View>
+          ) : null}
+          <Text style={styles.cardTitle}>{formatFlightLabel(flight.flightNumber)}</Text>
+        </View>
         {flight.assigned ? <AssignedBadge /> : null}
       </View>
       <Text style={styles.cardSub}>{flight.destination}</Text>
@@ -381,6 +399,21 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   cardRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  titleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  airlineChip: {
+    backgroundColor: colors.sgs.surfaceElevated,
+    borderColor: colors.sgs.green,
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  airlineChipTxt: {
+    fontFamily: FONTS.bodyBold,
+    fontSize: 12,
+    color: colors.sgs.green,
+    letterSpacing: 0.5,
+  },
   cardTitle: {
     fontFamily: FONTS.bodyBold,
     fontSize: 20,

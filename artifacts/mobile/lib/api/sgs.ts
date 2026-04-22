@@ -654,7 +654,14 @@ function normalizeHajjCheck(
   );
   const companyName = cleanField(raw.companyName);
   const city = cleanField(raw.city);
-  const reason = raw.reason ?? raw.message;
+  // `resultCode` / `reasonCode` are the new shape's machine-readable
+  // hints for *why* the server reached its verdict (e.g. "non_hajj",
+  // "unknown_tag", "different_flight"). Surface them as `reason` so
+  // `classifyHajjCheck` can pick localized titles off them just like
+  // it does for the legacy reason values, and so logRedScan captures
+  // the real code rather than a generic "unknown_tag" string.
+  const resultCode = cleanField(raw.resultCode ?? raw.reasonCode);
+  const reason = raw.reason ?? resultCode ?? raw.message;
 
   // Status derivation — a layered set of rules so older payloads keep
   // working and the new payload classifies correctly:
@@ -698,7 +705,20 @@ function normalizeHajjCheck(
       raw.isHajj === true ||
       nusukIsHajj ||
       (raw.isHajj == null && (!!accommodationName || !!pilgrimName));
-    if (raw.canCollectFromBelt === false && !treatAsHajj) {
+    // `resultCode` is checked as a tiebreaker. Codes that explicitly
+    // say "this isn't a Hajj bag" or "we couldn't find the tag" force
+    // red even if other signals look ambiguous; a future
+    // accommodation-related code can extend this list once the
+    // backend documents the full vocabulary (tracked in task-58 asks).
+    const code = (resultCode ?? "").toLowerCase();
+    const codeForcesRed =
+      code === "non_hajj" ||
+      code === "unknown_tag" ||
+      code === "no_nusuk" ||
+      code === "not_hajj";
+    if (codeForcesRed) {
+      status = "red";
+    } else if (raw.canCollectFromBelt === false && !treatAsHajj) {
       status = "red";
     } else if (!treatAsHajj) {
       // Server says not Hajj and there's no nusuk evidence → red.

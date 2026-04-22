@@ -103,10 +103,15 @@ export function useScannerMode(): ScannerModeState {
  * (whitespace/AIM prefix stripped) before being delivered. Used by the
  * scan screen for the green/red flash logic.
  */
-export function useZebraScanner(onBarcode: (data: string) => void) {
+export function useZebraScanner(
+  onBarcode: (data: string) => void,
+  options: { enabled?: boolean } = {},
+) {
+  const { enabled = true } = options;
   const cb = useRef(onBarcode);
   cb.current = onBarcode;
   useEffect(() => {
+    if (!enabled) return;
     const sub = DeviceEventEmitter.addListener(
       "ZebraScan",
       (event: ZebraScanEvent) => {
@@ -118,7 +123,7 @@ export function useZebraScanner(onBarcode: (data: string) => void) {
       },
     );
     return () => sub.remove();
-  }, []);
+  }, [enabled]);
 }
 
 /**

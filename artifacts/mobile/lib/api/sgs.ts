@@ -66,6 +66,47 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Build a one-line user-facing message from an ApiError.
+ *
+ * The SGS backend uses zod-validated routes that, on a 4xx, return a
+ * body of shape `{ message: string, errors?: { fieldErrors: Record<string,
+ * string[]>, formErrors: string[] } }`. Surfacing only `error.message`
+ * collapses every validation failure into the same generic
+ * "Validation failed" string with no clue which field is wrong (this
+ * was the root cause of task #68: agents got "Error" with no detail
+ * when picking the unsupported `CUSTOMS_HOLD` exception reason).
+ *
+ * Returns the server message plus the first per-field error (or first
+ * formError) when present, so an agent sees e.g.
+ *   "Validation failed — exceptionType: Invalid enum value..."
+ * Falls back to `error.message` when the body has no zod-shaped errors.
+ */
+export function formatApiErrorForUser(err: ApiError): string {
+  const base = err.message || `Request failed (${err.status})`;
+  const body = err.body as
+    | {
+        message?: string;
+        errors?: {
+          fieldErrors?: Record<string, string[] | undefined>;
+          formErrors?: string[];
+        };
+      }
+    | undefined;
+  const errors = body?.errors;
+  if (errors?.fieldErrors) {
+    for (const [field, msgs] of Object.entries(errors.fieldErrors)) {
+      if (msgs && msgs.length > 0) {
+        return `${base} — ${field}: ${msgs[0]}`;
+      }
+    }
+  }
+  if (errors?.formErrors && errors.formErrors.length > 0) {
+    return `${base} — ${errors.formErrors[0]}`;
+  }
+  return base;
+}
+
 type RequestOpts = RequestInit & { credentials?: RequestCredentials };
 
 // ---------- Request interceptor / logger ----------
@@ -226,10 +267,51 @@ export interface LoginResponse {
 export interface Flight {
   id: string;
   flightNumber: string;
+  /**
+   * IATA airline code (e.g. "QP", "TK", "BG"). Sourced from the live
+   * server's discrete `airlineCode` field. `null` when the field is
+   * absent (legacy cached payloads from before this client release) so
+   * render sites can fall back to regex-extracting the prefix from
+   * `flightNumber`.
+   */
+  airlineCode: string | null;
   destination: string;
   departureTime: string;
   assigned?: boolean;
   bagCount: number;
+}
+
+/**
+ * Resolve the airline code to display for a flight. Prefers the discrete
+ * server field `airlineCode`; falls back to regex-extracting a 1–3 letter
+ * prefix from `flightNumber` for legacy cached flights and for the rare
+ * server payload that ships the carrier glued to the number.
+ */
+export function getFlightAirlineCode(flight: Pick<Flight, "airlineCode" | "flightNumber">): string {
+  const fromField = flight.airlineCode?.trim().toUpperCase();
+  if (fromField) return fromField;
+  const m = /^([A-Z]{1,3})\s*\d/i.exec((flight.flightNumber ?? "").trim());
+  return m ? m[1].toUpperCase() : "";
+}
+
+/**
+ * Resolve the user-visible flight label, e.g. "QP 836". Composes the
+ * airline code (from the discrete server field or the regex fallback)
+ * with the numeric portion of `flightNumber`. When the carrier can't be
+ * resolved, returns `flightNumber` unchanged so legacy data still reads
+ * correctly.
+ */
+export function getFlightDisplayLabel(flight: Pick<Flight, "airlineCode" | "flightNumber">): string {
+  const num = (flight.flightNumber ?? "").trim();
+  if (!num) return "";
+  const airline = getFlightAirlineCode(flight);
+  if (!airline) return num;
+  // If the flight number already starts with the airline letters
+  // (legacy "XY1552" payloads), split them out so the chip + number
+  // doesn't double up the carrier prefix.
+  const m = /^([A-Z]{1,3})\s*(\d.*)$/i.exec(num);
+  const digits = m ? m[2] : num;
+  return `${airline} ${digits}`;
 }
 
 export interface BagGroup {
@@ -352,6 +434,11 @@ interface ServerFlight {
   id: string;
   flightNo?: string;
   flightNumber?: string;
+  // Live prod (verified 2026-04-23) returns the IATA carrier as a
+  // discrete `airlineCode` field (e.g. "QP", "TK"); older builds glued
+  // it onto `flightNumber`. We accept both and pick the discrete field
+  // first in `normalizeFlight`.
+  airlineCode?: string | null;
   destination?: string;
   arrivalAirport?: string;
   departureAirport?: string;
@@ -428,9 +515,11 @@ interface ServerBag {
 }
 
 function normalizeFlight(f: ServerFlight): Flight {
+  const airlineCode = f.airlineCode?.trim()?.toUpperCase() || null;
   return {
     id: String(f.id),
     flightNumber: f.flightNo ?? f.flightNumber ?? "",
+    airlineCode,
     destination:
       f.destination ?? f.arrivalAirport ?? f.originAirport ?? "",
     departureTime:

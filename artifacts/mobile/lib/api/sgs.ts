@@ -309,6 +309,18 @@ export interface ScanRequest {
   scannedAt: string; // ISO
   source: "zebra" | "camera" | "manual";
   deviceId?: string;
+  /**
+   * Local-only marker set by the Receiving screen when the at-100%
+   * over-scan guard fired for this scan (the bag was scanned against a
+   * group whose honest received count had already met or exceeded its
+   * expected count). Persisted on the queued record so an end-of-shift
+   * summary can show how many over-scans happened during the session;
+   * intentionally NOT forwarded in the wire payload (`submitScan` does
+   * not include it) — the server already sees the duplicate
+   * `COLLECTED_FROM_BELT` event itself, and we don't want to commit to
+   * a backend contract for this field yet.
+   */
+  overage?: boolean;
 }
 
 export interface ScanResponse {

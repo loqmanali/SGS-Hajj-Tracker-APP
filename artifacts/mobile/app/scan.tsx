@@ -499,6 +499,21 @@ export default function ScanScreen() {
       // Pilgrim name for the subtitle when we resolve a bag via the
       // rescue path (cached manifest already has it on the bag).
       let rescuedPilgrim: string | undefined;
+      // Captured rescued bag metadata so the green-side cache patch can
+      // upsert it into the cached manifest (the bag is by definition
+      // *not* in the cached manifest, otherwise the rescue path
+      // wouldn't have run). Without the upsert the manifest-derived
+      // honest count would miss this scan and the agent would see no
+      // +1 bump, since we no longer add `scanDelta` once the manifest
+      // is loaded for that group.
+      let rescuedBagForUpsert:
+        | {
+            tagNumber: string;
+            pilgrimName: string;
+            groupId: string;
+            flightId: string;
+          }
+        | undefined;
 
       // ---- Same-flight rescue ----------------------------------------
       // Per the duty-manager feedback: at receiving the only condition
@@ -520,6 +535,12 @@ export default function ScanScreen() {
           const rescuedGroupId = rescued.flightGroupId;
           acceptGroupId = rescuedGroupId;
           rescuedPilgrim = rescued.pilgrimName;
+          rescuedBagForUpsert = {
+            tagNumber: tag,
+            pilgrimName: rescued.pilgrimName ?? "",
+            groupId: rescuedGroupId,
+            flightId: rescued.flightId,
+          };
           // Re-check duplicate against the rescued group's scanned set
           // — without this an agent re-scanning a rescued bag would
           // get a misleading second green/COLLECTED.
@@ -557,6 +578,7 @@ export default function ScanScreen() {
       // resolved yet we fall back to the server's `scannedBags` + the
       // optimistic local delta, which preserves the pre-existing
       // behaviour during the bootstrap window.
+      let isOverage = false;
       if (decision.flash === "green" && acceptGroupId) {
         const acceptingGroup = groupsRef.current.find(
           (g) => g.id === acceptGroupId,
@@ -569,6 +591,7 @@ export default function ScanScreen() {
               : acceptingGroup.scannedBags +
                 (scanDeltaRef.current[acceptGroupId] ?? 0);
           if (currentReceived >= acceptingGroup.expectedBags) {
+            isOverage = true;
             decision = {
               flash: "amber",
               title: t("groupAlreadyComplete"),
@@ -650,6 +673,31 @@ export default function ScanScreen() {
             }
             return b;
           });
+          // Rescue-path upsert: when the bag was resolved off-manifest
+          // via the same-flight rescue, it is by definition not in the
+          // cached manifest's bag list, so the map() above flipped
+          // nothing. Append a synthetic ManifestBag with status=scanned
+          // so the manifest-derived honest count picks this scan up.
+          if (
+            !mutated &&
+            rescuedBagForUpsert &&
+            rescuedBagForUpsert.groupId === acceptGroupId
+          ) {
+            const r = rescuedBagForUpsert;
+            return {
+              ...old,
+              bags: [
+                ...old.bags,
+                {
+                  tagNumber: r.tagNumber,
+                  pilgrimName: r.pilgrimName,
+                  groupId: r.groupId,
+                  flightId: r.flightId,
+                  status: "scanned" as const,
+                },
+              ],
+            };
+          }
           return mutated ? { ...old, bags: nextBags } : old;
         });
         setScanDelta((prev) => ({
@@ -685,6 +733,10 @@ export default function ScanScreen() {
         scannedAt: new Date(now).toISOString(),
         source: isZebra ? "zebra" : "camera",
         deviceId: deviceIdRef.current ?? undefined,
+        // Local-only marker so the end-of-shift summary can surface
+        // over-scan events. Not forwarded in the wire payload — see
+        // ScanRequest.overage docstring in lib/api/sgs.ts.
+        overage: isOverage ? true : undefined,
       });
     },
     [isZebra, queue, session.session, trigger, mergedManifest, pulseAnim, queryClient, t, manifestErrorHard],

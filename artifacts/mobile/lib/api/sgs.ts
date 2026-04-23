@@ -309,6 +309,18 @@ export interface ScanRequest {
   scannedAt: string; // ISO
   source: "zebra" | "camera" | "manual";
   deviceId?: string;
+  /**
+   * Local-only marker set by the Receiving screen when the at-100%
+   * over-scan guard fired for this scan (the bag was scanned against a
+   * group whose honest received count had already met or exceeded its
+   * expected count). Persisted on the queued record so an end-of-shift
+   * summary can show how many over-scans happened during the session;
+   * intentionally NOT forwarded in the wire payload (`submitScan` does
+   * not include it) — the server already sees the duplicate
+   * `COLLECTED_FROM_BELT` event itself, and we don't want to commit to
+   * a backend contract for this field yet.
+   */
+  overage?: boolean;
 }
 
 export interface ScanResponse {
@@ -426,6 +438,28 @@ function normalizeFlight(f: ServerFlight): Flight {
     assigned: f.assigned,
     bagCount: f.bagCount ?? f.totalBags ?? 0,
   };
+}
+
+/**
+ * Count bags in a cached manifest that the SGS workflow considers "received"
+ * — i.e. bags whose backend `currentStatus` is `COLLECTED_FROM_BELT` or any
+ * downstream status. `normalizeBag` (below) collapses every such status to
+ * the client-side label `"scanned"`, so this helper is a one-line reduce
+ * over that field.
+ *
+ * Used by the Receiving screen as the source of truth for the per-group
+ * `X / Y` count and the at-100% over-scan guard, because the live SGS
+ * `/api/flight-groups` `actualBagCount` field currently mirrors
+ * `expectedBagCount` and is therefore not a usable count of received bags
+ * (see `.local/tasks/task-58.md` backend ask). Deriving the count from the
+ * cached manifest matches the supervisor's contract — a bag is received if
+ * and only if its `currentStatus` is `COLLECTED_FROM_BELT` (or downstream)
+ * — and works offline since the manifest is cached per group.
+ */
+export function countReceivedFromManifest(bags: ManifestBag[]): number {
+  let n = 0;
+  for (const b of bags) if (b.status === "scanned") n++;
+  return n;
 }
 
 function normalizeGroup(g: ServerFlightGroup): BagGroup {
